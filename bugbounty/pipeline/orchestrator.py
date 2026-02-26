@@ -154,6 +154,27 @@ class Orchestrator:
             await self.store.save_scan_run(scan_run)
 
         # Display scan info panel
+        vuln_cfg = self.config.vuln
+        enabled_scans: list[str] = []
+        if vuln_cfg.ssrf.enabled:
+            enabled_scans.append("SSRF-GET")
+        if vuln_cfg.post_ssrf:
+            enabled_scans.append("SSRF-POST")
+        if vuln_cfg.header_injection.enabled:
+            enabled_scans.append("Header-SSRF")
+        if vuln_cfg.xss.enabled:
+            enabled_scans.append("XSS")
+        if vuln_cfg.cors.enabled:
+            enabled_scans.append("CORS")
+        if vuln_cfg.open_redirect.enabled:
+            enabled_scans.append("Open-Redirect")
+        if vuln_cfg.takeover.enabled:
+            enabled_scans.append("Takeover")
+        if vuln_cfg.exposure.enabled:
+            enabled_scans.append("Exposure")
+        if vuln_cfg.js_scanner.enabled:
+            enabled_scans.append("JS-Secrets")
+
         info_table = Table.grid(padding=(0, 2))
         info_table.add_column(style="bold dim")
         info_table.add_column()
@@ -162,6 +183,10 @@ class Orchestrator:
         info_table.add_row("Platform:", self.config.target.platform)
         info_table.add_row("Scan ID:", scan_run.id)
         info_table.add_row("Model:", self.config.ai.model)
+        info_table.add_row(
+            "Vuln Coverage:",
+            ", ".join(enabled_scans) if enabled_scans else "Default",
+        )
         console.print(Panel(info_table, title="[bold]Scan Configuration[/bold]", expand=False))
 
         report_dir: Optional[Path] = None
@@ -220,21 +245,30 @@ class Orchestrator:
             # Phase 2: Scan Pipeline
             # ----------------------------------------------------------
             if not only_recon:
-                console.rule("[bold]Phase 2: SSRF + XSS Scanning[/bold]")
+                console.rule("[bold]Phase 2: Vulnerability Scanning[/bold]")
                 scan_result = await self._run_with_progress(
                     console,
-                    "Vulnerability Scanning (SSRF + XSS)",
+                    "Vulnerability Scanning",
                     self.scan_pipeline.run(scan_run_id=scan_run.id),
                 )
                 severity_str = ", ".join(
                     f"{v} {k}" for k, v in scan_result.findings_by_severity.items()
                 )
+                scan_detail_parts = [
+                    f"[red]SSRF: {scan_result.ssrf_findings}[/red]",
+                    f"[orange3]XSS: {scan_result.xss_findings}[/orange3]",
+                    f"CORS: {scan_result.cors_findings}",
+                    f"Redirect: {scan_result.redirect_findings}",
+                    f"Takeover: {scan_result.takeover_findings}",
+                    f"Exposure: {scan_result.exposure_findings}",
+                    f"JS-Secrets: {scan_result.js_secrets}",
+                    f"Header-SSRF: {scan_result.header_ssrf_findings}",
+                    f"Nuclei: {scan_result.nuclei_findings}",
+                ]
                 console.print(
                     f"[green]Scan complete:[/green] "
                     f"{scan_result.findings_total} findings "
-                    f"([red]SSRF: {scan_result.ssrf_findings}[/red], "
-                    f"[orange3]XSS: {scan_result.xss_findings}[/orange3], "
-                    f"Nuclei: {scan_result.nuclei_findings}) "
+                    f"({', '.join(scan_detail_parts)}) "
                     f"({severity_str or 'none'})"
                 )
 
@@ -418,6 +452,49 @@ class Orchestrator:
         )
 
         console.print(sev_table)
+
+        # Vulnerability coverage breakdown table
+        all_findings = analysis.true_positives + analysis.false_positives
+        if all_findings:
+            vuln_counts: dict[str, int] = {}
+            for f in all_findings:
+                src = f.template_id or ""
+                if "ssrf" in src or "ssrf" in (f.name or "").lower():
+                    key = "SSRF"
+                elif "xss" in src or "xss" in (f.name or "").lower():
+                    key = "XSS"
+                elif "cors" in src or "cors" in (f.name or "").lower():
+                    key = "CORS"
+                elif "redirect" in src or "redirect" in (f.name or "").lower():
+                    key = "Open Redirect"
+                elif "takeover" in src or "takeover" in (f.name or "").lower():
+                    key = "Subdomain Takeover"
+                elif "exposure" in src or any(
+                    kw in (f.name or "").lower()
+                    for kw in ["exposed", "disclosure", "git", "actuator", "env", "debug"]
+                ):
+                    key = "Exposure"
+                elif "secret" in src or "secret" in (f.name or "").lower():
+                    key = "JS Secret"
+                elif "header" in src:
+                    key = "Header SSRF"
+                elif "nuclei" in src:
+                    key = "Nuclei"
+                else:
+                    key = "Other"
+                vuln_counts[key] = vuln_counts.get(key, 0) + 1
+
+            if vuln_counts:
+                vuln_table = Table(
+                    title="Findings by Vulnerability Type",
+                    show_header=True,
+                    header_style="bold dim",
+                )
+                vuln_table.add_column("Vulnerability Type", style="bold")
+                vuln_table.add_column("Count", justify="right")
+                for vtype, cnt in sorted(vuln_counts.items(), key=lambda x: -x[1]):
+                    vuln_table.add_row(vtype, str(cnt))
+                console.print(vuln_table)
 
         # Chains
         if analysis.high_impact_chains:

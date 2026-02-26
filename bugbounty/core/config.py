@@ -133,11 +133,64 @@ class ArjunConfig(BaseModel):
     timeout: int = 30
 
 
+class OpenRedirectConfig(BaseModel):
+    enabled: bool = True
+    concurrent: int = 5
+    timeout: float = 8.0
+    verify_findings: bool = True
+
+
+class CORSConfig(BaseModel):
+    enabled: bool = True
+    concurrent: int = 10
+    timeout: float = 8.0
+    # Test API paths for CORS - more likely to have sensitive data
+    api_paths: list[str] = Field(default_factory=lambda: [
+        "/", "/api/", "/api/v1/", "/graphql", "/user"
+    ])
+
+
+class TakeoverConfig(BaseModel):
+    enabled: bool = True
+    concurrent: int = 20
+    timeout: float = 10.0
+
+
+class HeaderInjectionConfig(BaseModel):
+    enabled: bool = True
+    concurrent: int = 5
+    timeout: float = 10.0
+
+
+class JSScannerConfig(BaseModel):
+    enabled: bool = True
+    max_js_files: int = 100
+    timeout: float = 10.0
+
+
+class ExposureConfig(BaseModel):
+    enabled: bool = True
+    concurrent: int = 20
+    timeout: float = 8.0
+    # Categories to test - comment out any to disable
+    categories: list[str] = Field(default_factory=lambda: [
+        "git", "env", "api_docs", "graphql",
+        "spring_actuator", "debug", "backup", "admin"
+    ])
+
+
 class VulnToolsConfig(BaseModel):
     """Vulnerability-specific tool configuration."""
     ssrf: SSRFConfig = Field(default_factory=SSRFConfig)
     xss: XSSConfig = Field(default_factory=XSSConfig)
     arjun: ArjunConfig = Field(default_factory=ArjunConfig)
+    open_redirect: OpenRedirectConfig = Field(default_factory=OpenRedirectConfig)
+    cors: CORSConfig = Field(default_factory=CORSConfig)
+    takeover: TakeoverConfig = Field(default_factory=TakeoverConfig)
+    header_injection: HeaderInjectionConfig = Field(default_factory=HeaderInjectionConfig)
+    js_scanner: JSScannerConfig = Field(default_factory=JSScannerConfig)
+    exposure: ExposureConfig = Field(default_factory=ExposureConfig)
+    post_ssrf: bool = True  # Enable POST body SSRF testing
 
 
 class AIConfig(BaseModel):

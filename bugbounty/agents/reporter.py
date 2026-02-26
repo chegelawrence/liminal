@@ -5,12 +5,46 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 from bugbounty.agents.base import AgentTool, BaseAgent
 from bugbounty.core.llm import LLMProvider
 from bugbounty.db.models import AnalysisResult, Finding, LiveHost, ScanRun
 
 logger = logging.getLogger(__name__)
+
+# CWE identifiers by vulnerability class
+CWE_MAP: dict[str, str] = {
+    "ssrf": "CWE-918",
+    "xss": "CWE-79",
+    "cors": "CWE-942",
+    "open redirect": "CWE-601",
+    "redirect": "CWE-601",
+    "takeover": "CWE-284",
+    "git": "CWE-538",
+    "env": "CWE-312",
+    "actuator": "CWE-215",
+    "graphql": "CWE-200",
+    "exposure": "CWE-200",
+    "secret": "CWE-312",
+    "sqli": "CWE-89",
+    "lfi": "CWE-22",
+    "rce": "CWE-78",
+    "csrf": "CWE-352",
+}
+
+# CVSS 3.1 vector strings for common finding types
+CVSS_VECTORS: dict[str, str] = {
+    "ssrf_oob": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N",
+    "ssrf_error": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:C/C:H/I:N/A:N",
+    "xss_reflected": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+    "cors_critical": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H",
+    "cors_high": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:N/A:N",
+    "open_redirect": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+    "takeover": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    "env_exposure": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    "git_exposure": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+}
 
 _SYSTEM_PROMPT = """You are an expert bug bounty report writer with extensive experience submitting
 to HackerOne, Bugcrowd, Intigriti, and Synack.
@@ -123,8 +157,36 @@ class ReporterAgent(BaseAgent):
         tags = inp.get("tags", [])
         cvss_score = inp.get("cvss_score")
 
-        # Build formatted title
-        title = f"{severity}: {name} in {host}"
+        # Determine CWE and CVSS vector
+        name_lower = name.lower()
+        tags_lower = [t.lower() for t in tags]
+        combined_lower = name_lower + " " + " ".join(tags_lower)
+
+        cwe_id = "CWE-200"  # default: information exposure
+        for kw, cwe in CWE_MAP.items():
+            if kw in combined_lower:
+                cwe_id = cwe
+                break
+
+        # Determine CVSS vector
+        cvss_vector = _get_cvss_vector(name_lower, tags_lower, description)
+
+        # Build platform-ready report title
+        try:
+            parsed_host = urlparse(host if "://" in host else f"https://{host}")
+            host_display = parsed_host.netloc or host
+        except Exception:
+            host_display = host
+        report_title = _build_report_title(name, host_display, matched_at, description)
+
+        # Build curl PoC
+        curl_poc = _build_curl_poc(name_lower, matched_at, description)
+
+        # Business impact statement
+        business_impact = _build_business_impact(name_lower, severity, description)
+
+        # Build formatted title (internal)
+        title = report_title
 
         # Build formatted description
         formatted_description = (
@@ -196,9 +258,13 @@ class ReporterAgent(BaseAgent):
                 "report_title": title,
                 "severity": severity,
                 "cvss_score": cvss_score,
+                "cvss_vector": cvss_vector,
+                "cwe_id": cwe_id,
                 "formatted_description": formatted_description,
                 "impact_statement": impact,
+                "business_impact": business_impact,
                 "poc_steps": poc_formatted,
+                "curl_poc": curl_poc,
                 "remediation": remediation,
                 "references": references,
             }
@@ -414,6 +480,234 @@ class ReporterAgent(BaseAgent):
 # Module-level helpers
 # ------------------------------------------------------------------
 
+def _get_cvss_vector(name_lower: str, tags_lower: list[str], description: str) -> str:
+    """Return an appropriate CVSS 3.1 vector string for the finding type."""
+    combined = name_lower + " " + " ".join(tags_lower) + " " + description.lower()
+
+    if "ssrf" in combined:
+        if "oob" in combined or "confirmed" in combined:
+            return CVSS_VECTORS["ssrf_oob"]
+        return CVSS_VECTORS["ssrf_error"]
+    if "xss" in combined or "cross-site scripting" in combined:
+        return CVSS_VECTORS["xss_reflected"]
+    if "cors" in combined:
+        if "credential" in combined or "critical" in combined:
+            return CVSS_VECTORS["cors_critical"]
+        return CVSS_VECTORS["cors_high"]
+    if "redirect" in combined:
+        return CVSS_VECTORS["open_redirect"]
+    if "takeover" in combined:
+        return CVSS_VECTORS["takeover"]
+    if ".env" in combined or "env file" in combined or "env exposure" in combined:
+        return CVSS_VECTORS["env_exposure"]
+    if "git" in combined and "expos" in combined:
+        return CVSS_VECTORS["git_exposure"]
+
+    # Generic: network-accessible, low complexity, no auth, information exposure
+    return "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+
+
+def _build_report_title(name: str, host: str, matched_at: str, description: str) -> str:
+    """Build a platform-ready, concise report title."""
+    name_lower = name.lower()
+    # Extract the most useful part of matched_at for the title
+    try:
+        from urllib.parse import urlparse as _urlparse
+        parsed = _urlparse(matched_at if "://" in matched_at else f"https://{matched_at}")
+        path = parsed.path or "/"
+    except Exception:
+        path = "/"
+
+    if "ssrf" in name_lower:
+        return f"SSRF via URL parameter on {host} allows internal network access"
+    if "cors" in name_lower or "cross-origin" in name_lower:
+        return f"CORS misconfiguration on {host} enables cross-origin data theft"
+    if "xss" in name_lower:
+        return f"Reflected XSS on {host} via {path}"
+    if "redirect" in name_lower:
+        return f"Open redirect on {host} enables phishing via {path}"
+    if "takeover" in name_lower:
+        return f"Subdomain takeover possible on {host}"
+    if "git" in name_lower and "expo" in name_lower:
+        return f"Exposed .git directory on {host} leaks source code"
+    if ".env" in name_lower or "env file" in name_lower:
+        return f"Exposed .env file on {host} leaks credentials"
+    if "actuator" in name_lower:
+        return f"Spring Boot Actuator endpoints exposed on {host}"
+    if "graphql" in name_lower:
+        return f"GraphQL introspection enabled on {host} reveals full API schema"
+    if "secret" in name_lower:
+        return f"Hardcoded secret in JavaScript file on {host}"
+    # Generic fallback
+    return f"{name} on {host}"
+
+
+def _build_curl_poc(name_lower: str, matched_at: str, description: str) -> str:
+    """Build a ready-to-paste curl PoC command for common vulnerability types."""
+    combined = name_lower + " " + description.lower()
+
+    if "ssrf" in combined:
+        return (
+            f'curl -sk "{matched_at}?url=http://169.254.169.254/latest/meta-data/" | head -20'
+        )
+    if "cors" in combined:
+        return (
+            f'curl -sk -H "Origin: https://evil.com" -I "{matched_at}"'
+        )
+    if "redirect" in combined:
+        # Try to show a param-based example
+        sep = "&" if "?" in matched_at else "?"
+        return (
+            f'curl -sk -L "{matched_at}{sep}next=https://evil.com" '
+            f'-o /dev/null -w "%{{url_effective}}"'
+        )
+    if ".env" in combined or "env file" in combined:
+        try:
+            from urllib.parse import urlparse as _up
+            base = _up(matched_at)
+            base_url = f"{base.scheme}://{base.netloc}"
+        except Exception:
+            base_url = matched_at
+        return f'curl -sk "{base_url}/.env"'
+    if "git" in combined:
+        try:
+            from urllib.parse import urlparse as _up
+            base = _up(matched_at)
+            base_url = f"{base.scheme}://{base.netloc}"
+        except Exception:
+            base_url = matched_at
+        return f'curl -sk "{base_url}/.git/config"'
+    if "actuator" in combined:
+        try:
+            from urllib.parse import urlparse as _up
+            base = _up(matched_at)
+            base_url = f"{base.scheme}://{base.netloc}"
+        except Exception:
+            base_url = matched_at
+        return f'curl -sk "{base_url}/actuator/env" | python3 -m json.tool'
+    if "graphql" in combined:
+        return (
+            f"curl -sk -X POST -H 'Content-Type: application/json' "
+            f"-d '{{\"query\":\"{{__schema{{types{{name}}}}}}\"}}' "
+            f"'{matched_at}'"
+        )
+    if "xss" in combined:
+        sep = "&" if "?" in matched_at else "?"
+        return (
+            f'curl -sk "{matched_at}{sep}q=%3Cscript%3Ealert(1)%3C/script%3E" '
+            f'| grep -i "script"'
+        )
+
+    # Generic: just fetch the endpoint
+    return f'curl -sk "{matched_at}"'
+
+
+def _build_business_impact(name_lower: str, severity: str, description: str) -> str:
+    """Build a 2-3 sentence business risk statement."""
+    combined = name_lower + " " + description.lower()
+
+    if "ssrf" in combined:
+        return (
+            "Server-Side Request Forgery allows attackers to coerce the server into making "
+            "outbound requests to internal services, potentially exposing cloud credentials "
+            "(via AWS IMDS), internal APIs, or sensitive configuration data. "
+            "In cloud-hosted environments, successful exploitation can lead to full cloud "
+            "account compromise via IAM credential theft. "
+            "This represents a direct path to lateral movement within the internal network."
+        )
+    if "cors" in combined and ("credential" in combined or "critical" in combined.lower()):
+        return (
+            "Critical CORS misconfiguration allows any attacker-controlled website to "
+            "make authenticated cross-origin requests on behalf of logged-in users. "
+            "This enables full account takeover: an attacker can read session tokens, "
+            "personal data, and perform any action the victim can perform. "
+            "All users who visit a malicious page while logged in are at immediate risk."
+        )
+    if "cors" in combined:
+        return (
+            "CORS misconfiguration allows cross-origin requests from untrusted origins, "
+            "potentially exposing sensitive response data to attacker-controlled pages. "
+            "While credentials cannot be sent with wildcard origins, any unauthenticated "
+            "data visible in the response can be exfiltrated. "
+            "Attackers can systematically extract API responses from any victim's browser."
+        )
+    if "takeover" in combined:
+        return (
+            "Subdomain takeover allows an attacker to host malicious content under the "
+            "organisation's trusted domain, lending credibility to phishing attacks. "
+            "If the parent domain uses broad cookie scope, the attacker may steal session "
+            "cookies for users who visit the compromised subdomain. "
+            "Users have no way to distinguish attacker-controlled content from legitimate content."
+        )
+    if ".env" in combined or "env file" in combined:
+        return (
+            "Exposed environment files contain production credentials including database "
+            "passwords, API keys, and encryption secrets in plaintext. "
+            "Any unauthenticated user can download this file and gain full access to "
+            "connected backend services, databases, and third-party APIs. "
+            "This is a critical data breach risk requiring immediate remediation."
+        )
+    if "git" in combined:
+        return (
+            "Exposed Git repository allows attackers to download the complete application "
+            "source code, commit history, and any secrets ever committed to the repository. "
+            "This provides a roadmap for finding additional vulnerabilities and may expose "
+            "credentials, private keys, or internal architecture details. "
+            "Once source code is exfiltrated, it cannot be recalled."
+        )
+    if "redirect" in combined:
+        return (
+            "Open redirects are frequently exploited in phishing campaigns to redirect "
+            "victims from a trusted domain to a malicious site, bypassing URL reputation filters. "
+            "When combined with OAuth flows, open redirects can be used to steal access tokens "
+            "by redirecting the authorization code to an attacker-controlled server. "
+            "This compounds to an account takeover risk for OAuth-enabled applications."
+        )
+    if "xss" in combined:
+        return (
+            "Cross-Site Scripting allows execution of arbitrary JavaScript in the context of "
+            "the victim's browser session, enabling session hijacking, credential theft, and "
+            "UI redressing attacks. "
+            "Attackers can exfiltrate cookies, local storage tokens, and any data visible in "
+            "the DOM, then use these credentials for account takeover. "
+            "All users who can be directed to the vulnerable page are affected."
+        )
+    if "actuator" in combined:
+        return (
+            "Exposed Spring Boot Actuator endpoints reveal sensitive operational data including "
+            "environment variables, configuration properties, and application internals. "
+            "The /actuator/heapdump endpoint may expose in-memory credentials, session tokens, "
+            "and cryptographic material. "
+            "This information significantly reduces the effort required for further exploitation."
+        )
+    if "graphql" in combined:
+        return (
+            "Enabled GraphQL introspection exposes the complete API schema to unauthenticated "
+            "users, revealing all types, queries, mutations, and their parameters. "
+            "This provides attackers with a detailed blueprint for targeting sensitive operations, "
+            "testing for authorisation bypasses, and discovering hidden functionality. "
+            "Schema exposure is the first step in a GraphQL-targeted attack chain."
+        )
+    if "secret" in combined:
+        return (
+            "Hardcoded secrets in publicly accessible JavaScript files allow any user to extract "
+            "API credentials that may grant access to third-party services, cloud resources, "
+            "or internal APIs. "
+            "Unlike server-side secrets, these cannot be protected by access controls once published. "
+            "Rotation of all exposed credentials is required immediately."
+        )
+
+    # Generic
+    severity_lower = severity.lower()
+    return (
+        f"This {severity_lower} severity vulnerability poses a tangible risk to the "
+        "confidentiality, integrity, or availability of the affected system. "
+        "Successful exploitation by a malicious actor could result in unauthorised data access "
+        "or system compromise. "
+        "Remediation should be prioritised according to the severity rating."
+    )
+
+
 def _get_remediation(name: str, tags: list[str], description: str) -> str:
     """Return targeted remediation advice based on vulnerability characteristics."""
     name_lower = name.lower()
@@ -472,6 +766,65 @@ def _get_remediation(name: str, tags: list[str], description: str) -> str:
             "Update TLS configuration to use TLS 1.2 or 1.3 only. Disable weak cipher suites "
             "and obsolete protocols (SSLv3, TLS 1.0, TLS 1.1). Ensure certificates are valid, "
             "properly chained, and renewed before expiry. Enable HSTS with a long max-age."
+        )
+    if "cors" in combined:
+        return (
+            "Implement a strict CORS allowlist: explicitly enumerate trusted origins rather than "
+            "reflecting the request Origin header. Never use Access-Control-Allow-Origin: * with "
+            "Access-Control-Allow-Credentials: true (browsers block this per spec, but explicit "
+            "reflection creates the same vulnerability). Validate origins against a server-side "
+            "allowlist using exact string comparison. Reject or ignore requests from unlisted origins."
+        )
+    if "takeover" in combined or "subdomain" in combined:
+        return (
+            "Immediately remove the dangling CNAME DNS record for this subdomain, or provision "
+            "a valid resource on the target service to prevent registration by an attacker. "
+            "Audit all subdomains for similar dangling CNAME patterns using automated tools. "
+            "Implement a process to remove DNS records when cloud services are decommissioned. "
+            "Consider using CNAME flattening where the DNS provider resolves CNAMEs and returns "
+            "the final A record, preventing third-party service claims."
+        )
+    if "git" in combined and ("expos" in combined or "disclos" in combined):
+        return (
+            "Immediately restrict access to the /.git/ directory using web server configuration "
+            "(e.g. deny all in .htaccess or Nginx location block). "
+            "Rotate all credentials that may have been committed to the repository history. "
+            "Review git log for historically committed secrets: git log -p | grep -i password. "
+            "Consider using git-secrets or pre-commit hooks to prevent future secret commits."
+        )
+    if ".env" in combined or "env file" in combined:
+        return (
+            "Remove or restrict web server access to .env and all configuration backup files. "
+            "Configure your web server to deny requests for dot-files (files starting with '.'). "
+            "Immediately rotate all credentials found in the exposed file. "
+            "Use a secrets management solution (AWS Secrets Manager, HashiCorp Vault) rather than "
+            "storing secrets in environment files on the filesystem."
+        )
+    if "actuator" in combined:
+        return (
+            "Restrict Spring Boot Actuator endpoints to internal networks only using Spring "
+            "Security or network-level access controls. In application.properties, set: "
+            "management.endpoints.web.exposure.include=health,info and disable heapdump/threaddump. "
+            "If Actuator must be accessible, require authentication: "
+            "management.endpoint.health.show-details=when-authorized. "
+            "Regularly audit which endpoints are exposed in production."
+        )
+    if "graphql" in combined:
+        return (
+            "Disable GraphQL introspection in production environments. In most GraphQL frameworks "
+            "this is a single configuration flag (e.g. graphql.introspection.enabled=false). "
+            "Implement query depth limiting and complexity analysis to prevent abuse. "
+            "Enforce authentication on all sensitive GraphQL operations. "
+            "Use a GraphQL-aware WAF rule to block introspection queries from external clients."
+        )
+    if "secret" in combined and "javascript" in combined:
+        return (
+            "Never include secrets, API keys, or credentials in client-side JavaScript files. "
+            "Move all sensitive operations server-side and expose only public-facing data to the "
+            "frontend. Immediately rotate all exposed credentials. "
+            "Use environment variable injection at build time for build-time constants (not secrets). "
+            "Implement a CI/CD secret scanning step (e.g. truffleHog, git-secrets) to prevent "
+            "future secret leaks."
         )
     if "exposure" in combined or "disclosure" in combined or "information" in combined:
         return (

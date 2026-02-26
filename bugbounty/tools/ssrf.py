@@ -336,3 +336,183 @@ class SSRFScanner:
     def _build_url(base_url: str, param: str, value: str) -> str:
         """Construct a URL with *param* set to *value*."""
         return f"{base_url}?{urlencode({param: value})}"
+
+
+# ---------------------------------------------------------------------------
+# POST body SSRF testing
+# ---------------------------------------------------------------------------
+
+# JSON / form field names that frequently accept URLs in POST bodies
+POST_SSRF_FIELDS = [
+    "url", "callback", "webhook", "endpoint", "redirect",
+    "target", "dest", "destination", "src", "source",
+    "uri", "resource", "link", "href", "fetch",
+    "image_url", "avatar_url", "logo_url", "icon_url",
+    "thumbnail", "preview_url", "embed_url", "feed_url",
+    "import_url", "export_url", "download_url", "upload_url",
+    "notify_url", "notification_url", "success_url", "return_url",
+    "service_url", "api_url", "base_url", "proxy_url",
+]
+
+
+class PostSSRFScanner:
+    """Tests POST endpoints for SSRF via JSON body and form-encoded parameters.
+
+    For each endpoint:
+    1. Tries POST with JSON body {field: interactsh_url} for each field in POST_SSRF_FIELDS.
+    2. Also tries form-encoded POST.
+    3. Waits for OOB callback.
+    4. Rate limit: pause 100ms between fields per endpoint.
+    """
+
+    def __init__(
+        self,
+        scope_validator: ScopeValidator,
+        interactsh: InteractshClient,
+        rate_limiter: Optional[RateLimiter] = None,
+        concurrent: int = 5,
+        timeout: float = 10.0,
+        oob_wait: float = 15.0,
+    ) -> None:
+        self.scope = scope_validator
+        self.interactsh = interactsh
+        self.rate_limiter = rate_limiter
+        self.concurrent = concurrent
+        self.timeout = timeout
+        self.oob_wait = oob_wait
+        self._semaphore = asyncio.Semaphore(concurrent)
+
+    async def scan_post_endpoints(
+        self,
+        endpoints: list[str],
+    ) -> list[SSRFFinding]:
+        """Test POST endpoints for SSRF in JSON body parameters.
+
+        Args:
+            endpoints: List of endpoint URLs to test.
+
+        Returns:
+            List of confirmed SSRF findings.
+        """
+        if not self.interactsh.available:
+            logger.warning(
+                "PostSSRFScanner: interactsh not available – POST SSRF skipped"
+            )
+            return []
+
+        in_scope = [e for e in endpoints if self.scope.is_in_scope(e)]
+        logger.info(
+            "POST SSRF scanner: testing %d endpoints × %d fields",
+            len(in_scope), len(POST_SSRF_FIELDS),
+        )
+
+        tasks = [
+            asyncio.create_task(self._scan_endpoint(url))
+            for url in in_scope
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        findings: list[SSRFFinding] = []
+        for r in results:
+            if isinstance(r, Exception):
+                logger.debug("POST SSRF endpoint exception: %s", r)
+                continue
+            if r:
+                findings.extend(r)
+
+        logger.info("POST SSRF scanner: %d findings", len(findings))
+        return findings
+
+    async def _scan_endpoint(self, url: str) -> list[SSRFFinding]:
+        async with self._semaphore:
+            findings: list[SSRFFinding] = []
+            for field in POST_SSRF_FIELDS:
+                # JSON body
+                finding = await self._test_post_field(url, field, "application/json")
+                if finding:
+                    findings.append(finding)
+                    break  # one confirmed finding per endpoint is enough
+
+                # Form-encoded
+                finding = await self._test_post_field(
+                    url, field, "application/x-www-form-urlencoded"
+                )
+                if finding:
+                    findings.append(finding)
+                    break
+
+                await asyncio.sleep(0.1)
+            return findings
+
+    async def _test_post_field(
+        self,
+        url: str,
+        field: str,
+        content_type: str,
+    ) -> Optional[SSRFFinding]:
+        """Send a POST request with the SSRF payload in a specific field.
+
+        Args:
+            url:          Endpoint URL.
+            field:        JSON/form field name.
+            content_type: "application/json" or "application/x-www-form-urlencoded".
+
+        Returns:
+            SSRFFinding if an OOB interaction is received, else None.
+        """
+        safe_tag = field[:10]
+        payload_url = self.interactsh.unique_url(tag=safe_tag)
+        if not payload_url:
+            return None
+
+        import json as _json
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                if content_type == "application/json":
+                    body_data = _json.dumps({field: payload_url})
+                    await client.post(
+                        url,
+                        content=body_data,
+                        headers={"Content-Type": "application/json"},
+                    )
+                else:
+                    await client.post(
+                        url,
+                        data={field: payload_url},
+                    )
+        except Exception:
+            pass  # Connection errors expected — we rely on OOB callback
+
+        interactions = await self.interactsh.wait_for_interaction(
+            timeout=self.oob_wait,
+            expected_tag=safe_tag,
+        )
+
+        if interactions:
+            interaction = interactions[0]
+            protocol = interaction.get("protocol", "unknown")
+            remote = interaction.get("remote-address", "unknown")
+            logger.info(
+                "POST SSRF confirmed (OOB %s callback) on %s field=%s ct=%s from %s",
+                protocol, url, field, content_type, remote,
+            )
+            # Build a synthetic SSRFCandidate to reuse SSRFFinding
+            candidate = SSRFCandidate(
+                url=url,
+                param=f"{field}[{content_type}]",
+                method="POST",
+            )
+            return SSRFFinding(
+                candidate=candidate,
+                evidence_type="oob_interaction",
+                evidence=(
+                    f"Received {protocol} OOB callback when POSTing interactsh URL "
+                    f"in JSON field '{field}' (Content-Type: {content_type}). "
+                    f"Server made outbound connection from {remote}."
+                ),
+                confidence="confirmed",
+                payload=payload_url,
+                interaction=interaction,
+            )
+        return None

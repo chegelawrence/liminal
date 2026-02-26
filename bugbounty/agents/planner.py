@@ -159,41 +159,94 @@ class PlannerAgent(BaseAgent):
         for sd in subdomains:
             score = 0
             lower = sd.lower()
-            if any(kw in lower for kw in ["api", "graphql", "rest", "rpc"]):
+
+            # API-first scoring (highest SSRF/XSS probability)
+            if any(kw in lower for kw in [
+                "api", "gateway", "backend", "service", "microservice",
+                "rpc", "rest", "graphql",
+            ]):
+                score += 15
+
+            # Auth surfaces (high SSRF + redirect probability)
+            if any(kw in lower for kw in [
+                "auth", "oauth", "login", "sso", "saml", "token",
+                "identity", "iam", "account",
+            ]):
+                score += 12
+
+            # Payment / billing (high bounty if vulnerable)
+            if any(kw in lower for kw in [
+                "pay", "billing", "checkout", "wallet", "stripe", "payment",
+            ]):
+                score += 11
+
+            # Staging / dev environments (often less hardened, same codebase)
+            if any(kw in lower for kw in [
+                "dev", "staging", "stage", "test", "uat", "qa", "beta",
+                "sandbox", "preview",
+            ]):
                 score += 10
-            if any(kw in lower for kw in ["admin", "manage", "dashboard", "panel", "console"]):
+
+            # Internal / corp (often not meant to be public)
+            if any(kw in lower for kw in [
+                "internal", "intranet", "corp", "vpn", "private",
+            ]):
+                score += 10
+
+            # Admin panels
+            if any(kw in lower for kw in [
+                "admin", "manage", "dashboard", "panel", "console",
+                "portal", "control",
+            ]):
                 score += 9
-            if any(kw in lower for kw in ["auth", "login", "oauth", "sso", "iam", "token"]):
+
+            # Upload / media (SSRF via image URL, file processing)
+            if any(kw in lower for kw in [
+                "upload", "media", "file", "cdn", "storage", "assets",
+                "img", "image",
+            ]):
                 score += 8
-            if any(kw in lower for kw in ["dev", "staging", "test", "uat", "qa", "beta"]):
-                score += 7  # Often less hardened
-            if any(kw in lower for kw in ["pay", "billing", "checkout", "wallet"]):
-                score += 9
-            if any(kw in lower for kw in ["internal", "intranet", "corp", "vpn"]):
-                score += 8
-            if any(kw in lower for kw in ["upload", "download", "media", "file", "cdn"]):
-                score += 6
+
             scored.append((score, sd))
 
         scored.sort(reverse=True)
         priority_list = [sd for _, sd in scored[:20]]
 
+        # Always include all new scan types — ordered by speed and severity
+        scan_types: list[str] = [
+            "subdomain-takeover",   # always first - high severity, fast
+            "exposed-endpoints",    # fast, high value
+            "cors-scan",            # fast, very common
+            "nuclei-xss-ssrf",
+            "parameter-discovery",
+            "ssrf-get",
+            "ssrf-post",
+            "header-ssrf",
+            "open-redirect",
+            "xss-reflection",
+            "dalfox",
+            "js-scanning",
+        ]
+
         # Recommend scan types based on technologies
-        scan_types: list[str] = ["nuclei-full", "directory-bruteforce"]
         tech_lower = [t.lower() for t in technologies]
         if any(t in tech_lower for t in ["wordpress", "joomla", "drupal"]):
-            scan_types.append("cms-specific-nuclei")
-            scan_types.append("wpscan")
+            if "cms-specific-nuclei" not in scan_types:
+                scan_types.append("cms-specific-nuclei")
+            if "wpscan" not in scan_types:
+                scan_types.append("wpscan")
         if any(t in tech_lower for t in ["spring", "java", "tomcat"]):
-            scan_types.append("java-deserialization-check")
-            scan_types.append("spring-actuator-exposure")
+            if "java-deserialization-check" not in scan_types:
+                scan_types.append("java-deserialization-check")
         if any(t in tech_lower for t in ["graphql"]):
-            scan_types.append("graphql-introspection")
-            scan_types.append("graphql-injection")
+            if "graphql-injection" not in scan_types:
+                scan_types.append("graphql-injection")
         if any(t in tech_lower for t in ["nginx", "apache"]):
-            scan_types.append("web-server-misconfig")
+            if "web-server-misconfig" not in scan_types:
+                scan_types.append("web-server-misconfig")
         if any(t in tech_lower for t in ["aws", "azure", "gcp", "s3"]):
-            scan_types.append("cloud-misconfig")
+            if "cloud-misconfig" not in scan_types:
+                scan_types.append("cloud-misconfig")
 
         # Technology focus for report
         tech_focus: list[str] = list({t for t in technologies if t})[:10]
