@@ -1,0 +1,108 @@
+target:
+  domain: "example.com"
+  program_name: "Example Bug Bounty"
+  platform: "HackerOne"   # HackerOne, Bugcrowd, Intigriti, etc.
+
+scope:
+  in_scope:
+    - "*.example.com"
+    - "example.com"
+  out_of_scope:
+    - "blog.example.com"
+    - "status.example.com"
+  ip_ranges: []
+
+rate_limits:
+  requests_per_second: 10
+  concurrent_requests: 5
+  nuclei_rate: 50
+  ffuf_rate: 100
+
+tools:
+  subfinder:
+    enabled: true
+    timeout: 120
+    silent: true
+  amass:
+    enabled: true
+    timeout: 300
+    mode: "passive"
+  dnsx:
+    enabled: true
+    resolvers:
+      - "1.1.1.1"
+      - "8.8.8.8"
+  httpx:
+    enabled: true
+    timeout: 10
+    follow_redirects: true
+    tech_detect: true
+  naabu:
+    enabled: true
+    top_ports: 1000
+    timeout: 300
+  nuclei:
+    enabled: true
+    severity: ["critical", "high", "medium"]
+    tags: []
+    exclude_tags: ["dos", "fuzz", "intrusive"]
+    rate_limit: 50
+    timeout: 30
+  ffuf:
+    enabled: false
+    wordlist: "/usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt"
+    extensions: ["php", "asp", "aspx", "jsp", "json", "yaml"]
+    rate: 100
+    timeout: 10
+  gau:
+    enabled: true
+    providers: ["wayback", "commoncrawl", "otx", "urlscan"]
+  katana:
+    enabled: true
+    depth: 3
+    timeout: 300
+    headless: false
+
+# SSRF + XSS focused vulnerability scanning
+vuln:
+  ssrf:
+    enabled: true
+    interactsh_server: "oast.pro"   # Free public interactsh server
+    oob_wait_seconds: 15.0          # Seconds to wait for OOB DNS/HTTP callback
+    concurrent: 5
+    timeout: 10.0
+    verify_findings: true           # Re-test each finding before reporting
+    extra_params: []                # Additional param names beyond built-in list
+
+  xss:
+    enabled: true
+    dalfox_enabled: true            # Run dalfox (best automated XSS scanner)
+    reflection_scanner_enabled: true # Run custom unescaped-reflection detector
+    verify_findings: true           # Re-test each finding to confirm unescaped output
+    concurrent: 5
+    timeout: 10.0
+    blind_xss_url: ""               # Optional: XSS Hunter URL for blind XSS
+
+  arjun:
+    enabled: true                   # Hidden parameter discovery on high-value endpoints
+    threads: 5
+    timeout: 30
+
+ai:
+  # Provider: "claude" or "openai"
+  provider: "claude"
+
+  # Claude settings (active when provider = "claude")
+  claude_model: "claude-opus-4-6"
+
+  # OpenAI settings (active when provider = "openai")
+  openai_model: "gpt-4o"
+
+  # Shared settings
+  max_tokens: 8192
+  temperature: 0
+
+output:
+  results_dir: "./results"
+  formats: ["html", "markdown", "json"]
+  verbose: false

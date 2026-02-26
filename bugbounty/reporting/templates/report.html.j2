@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bug Bounty Report – {{ scan_run.target_domain }}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root {
+      --severity-critical: #dc3545;
+      --severity-high:     #fd7e14;
+      --severity-medium:   #ffc107;
+      --severity-low:      #0d6efd;
+      --severity-info:     #6c757d;
+    }
+    body { background: #f8f9fa; }
+    .sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: #212529; }
+    .sidebar a { color: #adb5bd; text-decoration: none; display: block; padding: 6px 16px; font-size: 0.85rem; }
+    .sidebar a:hover { color: #fff; background: #343a40; }
+    .sidebar .nav-heading { color: #6c757d; font-size: 0.75rem; text-transform: uppercase; padding: 12px 16px 4px; }
+    .severity-badge-critical { background: var(--severity-critical); }
+    .severity-badge-high     { background: var(--severity-high); }
+    .severity-badge-medium   { background: var(--severity-medium); color: #000; }
+    .severity-badge-low      { background: var(--severity-low); }
+    .severity-badge-info     { background: var(--severity-info); }
+    .severity-badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.78rem; font-weight: 600; color: #fff; }
+    .severity-badge-medium   { color: #000; }
+    .finding-card { border-left: 4px solid #dee2e6; margin-bottom: 2rem; }
+    .finding-card.critical { border-left-color: var(--severity-critical); }
+    .finding-card.high      { border-left-color: var(--severity-high); }
+    .finding-card.medium    { border-left-color: var(--severity-medium); }
+    .finding-card.low       { border-left-color: var(--severity-low); }
+    .finding-card.info      { border-left-color: var(--severity-info); }
+    .stat-card { text-align: center; padding: 1rem; border-radius: 8px; color: #fff; }
+    .stat-card .count { font-size: 2.5rem; font-weight: 700; line-height: 1; }
+    .stat-card .label { font-size: 0.85rem; opacity: 0.85; margin-top: 4px; }
+    .poc-step { background: #f1f3f5; border-left: 3px solid #6c757d; padding: 6px 12px; margin: 4px 0; border-radius: 0 4px 4px 0; font-family: monospace; font-size: 0.85rem; }
+    .tag-badge { display: inline-block; background: #e9ecef; color: #495057; border-radius: 4px; padding: 1px 8px; font-size: 0.75rem; margin: 1px; }
+    .chain-card { background: #fff3cd; border: 1px solid #ffc107; }
+    #filter-bar .btn-check:checked + .btn-outline-danger   { background: var(--severity-critical); color: #fff; }
+    #filter-bar .btn-check:checked + .btn-outline-warning  { background: var(--severity-high);     color: #fff; }
+    #filter-bar .btn-check:checked + .btn-outline-secondary{ background: var(--severity-medium);   color: #000; }
+    #filter-bar .btn-check:checked + .btn-outline-info     { background: var(--severity-low);      color: #fff; }
+    pre code { font-size: 0.8rem; }
+    .toc-active { color: #fff !important; background: #343a40 !important; }
+  </style>
+</head>
+<body>
+
+<div class="d-flex">
+  <!-- Sidebar -->
+  <nav class="sidebar d-none d-lg-flex flex-column" style="min-width:220px; max-width:220px;">
+    <div class="p-3 border-bottom border-secondary">
+      <div class="text-white fw-bold">BugBounty AI</div>
+      <div class="text-secondary" style="font-size:0.75rem;">{{ scan_run.target_domain }}</div>
+    </div>
+    <div class="pt-2 flex-grow-1">
+      <div class="nav-heading">Navigation</div>
+      <a href="#executive-summary">Executive Summary</a>
+      <a href="#statistics">Statistics</a>
+      {% if chains %}<a href="#chains">Vulnerability Chains</a>{% endif %}
+      <a href="#findings">Findings</a>
+      <a href="#live-hosts">Live Hosts</a>
+      {% if remediation_roadmap %}<a href="#remediation">Remediation</a>{% endif %}
+      <a href="#metadata">Metadata</a>
+      {% if findings %}
+      <div class="nav-heading">Findings</div>
+      {% for f in findings %}
+      <a href="#finding-{{ loop.index }}">
+        <span class="severity-badge severity-badge-{{ f.severity }}" style="font-size:0.65rem;">{{ f.severity[:1].upper() }}</span>
+        {{ f.title[:28] }}{% if f.title|length > 28 %}…{% endif %}
+      </a>
+      {% endfor %}
+      {% endif %}
+    </div>
+    <div class="p-2 border-top border-secondary" style="font-size:0.7rem; color:#6c757d;">
+      Generated {{ generated_at | format_dt }}
+    </div>
+  </nav>
+
+  <!-- Main content -->
+  <main class="flex-grow-1 p-4" style="max-width: 960px;">
+
+    <!-- Header -->
+    <div class="mb-4">
+      <h1 class="h3 fw-bold">Security Assessment Report</h1>
+      <div class="text-muted">
+        {{ scan_run.program_name }} &middot; {{ scan_run.target_domain }} &middot;
+        {{ scan_run.started_at | format_dt }}
+      </div>
+    </div>
+
+    <!-- Executive Summary -->
+    <section id="executive-summary" class="mb-5">
+      <h2 class="h5 fw-bold border-bottom pb-2">Executive Summary</h2>
+      <div class="card border-0 shadow-sm">
+        <div class="card-body">
+          <p class="mb-0">{{ executive_summary }}</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Statistics -->
+    <section id="statistics" class="mb-5">
+      <h2 class="h5 fw-bold border-bottom pb-2">Statistics</h2>
+      <div class="row g-3">
+        <div class="col-6 col-md-2">
+          <div class="stat-card" style="background: var(--severity-critical);">
+            <div class="count">{{ stats.critical }}</div>
+            <div class="label">Critical</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-2">
+          <div class="stat-card" style="background: var(--severity-high);">
+            <div class="count">{{ stats.high }}</div>
+            <div class="label">High</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-2">
+          <div class="stat-card" style="background: var(--severity-medium); color:#000;">
+            <div class="count">{{ stats.medium }}</div>
+            <div class="label">Medium</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-2">
+          <div class="stat-card" style="background: var(--severity-low);">
+            <div class="count">{{ stats.low }}</div>
+            <div class="label">Low</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-2">
+          <div class="stat-card" style="background: #20c997;">
+            <div class="count">{{ stats.live_hosts }}</div>
+            <div class="label">Live Hosts</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-2">
+          <div class="stat-card" style="background: #6f42c1;">
+            <div class="count">{{ stats.chains }}</div>
+            <div class="label">Chains</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Vulnerability Chains -->
+    {% if chains %}
+    <section id="chains" class="mb-5">
+      <h2 class="h5 fw-bold border-bottom pb-2">
+        Vulnerability Chains
+        <span class="badge bg-warning text-dark ms-2">{{ chains | length }}</span>
+      </h2>
+      {% for chain in chains %}
+      <div class="card chain-card mb-3 border-0 shadow-sm">
+        <div class="card-body">
+          <h6 class="card-title fw-bold">
+            <span class="badge bg-danger me-2">{{ chain.chained_severity | default("high") | upper }}</span>
+            {{ chain.chain_id | default("Vulnerability Chain") }}
+          </h6>
+          <p class="card-text mb-1"><strong>Impact:</strong> {{ chain.impact | default("") }}</p>
+          <p class="card-text mb-1 text-muted">{{ chain.description | default("") }}</p>
+          <div>
+            <strong>Components:</strong>
+            {% for c in chain.components | default([]) %}
+            <span class="tag-badge">{{ c }}</span>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    <!-- Finding Filter -->
+    {% if findings %}
+    <section id="findings" class="mb-3">
+      <h2 class="h5 fw-bold border-bottom pb-2">
+        Findings
+        <span class="badge bg-secondary ms-2">{{ findings | length }}</span>
+      </h2>
+
+      <div id="filter-bar" class="mb-3 d-flex flex-wrap gap-2">
+        <span class="text-muted me-1 align-self-center" style="font-size:0.85rem;">Filter:</span>
+        {% for sev in ["critical", "high", "medium", "low", "info"] %}
+        <input type="checkbox" class="btn-check" id="filter-{{ sev }}" autocomplete="off" checked
+               onchange="filterFindings()">
+        <label class="btn btn-sm btn-outline-{{ ["danger","warning","warning","info","secondary"][loop.index0] }}"
+               for="filter-{{ sev }}">
+          {{ sev.capitalize() }} ({{ stats[sev] }})
+        </label>
+        {% endfor %}
+      </div>
+
+      {% for f in findings %}
+      <div class="card finding-card {{ f.severity }} shadow-sm" id="finding-{{ loop.index }}"
+           data-severity="{{ f.severity }}">
+        <div class="card-header bg-transparent d-flex align-items-start gap-2">
+          <span class="severity-badge severity-badge-{{ f.severity }}">{{ f.severity.upper() }}</span>
+          <div class="flex-grow-1">
+            <span class="fw-bold">{{ f.title }}</span>
+            {% if f.cvss_score %}
+            <span class="badge bg-dark ms-2">CVSS {{ "%.1f" | format(f.cvss_score) }}</span>
+            {% endif %}
+          </div>
+          <button class="btn btn-sm btn-outline-secondary"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#finding-body-{{ loop.index }}">
+            Details
+          </button>
+        </div>
+        <div class="collapse show" id="finding-body-{{ loop.index }}">
+          <div class="card-body">
+            <div class="row g-3 mb-3">
+              <div class="col-md-6">
+                <div class="text-muted" style="font-size:0.8rem;">Affected Host</div>
+                <code>{{ f.host }}</code>
+              </div>
+              <div class="col-md-6">
+                <div class="text-muted" style="font-size:0.8rem;">Matched At</div>
+                <code>{{ f.matched_at }}</code>
+              </div>
+            </div>
+
+            {% if f.cve_id %}
+            <div class="alert alert-danger py-1 px-3 d-inline-block mb-3" style="font-size:0.85rem;">
+              CVE: <a href="https://nvd.nist.gov/vuln/detail/{{ f.cve_id }}" target="_blank">{{ f.cve_id }}</a>
+            </div>
+            {% endif %}
+
+            <h6 class="fw-bold mt-2">Description</h6>
+            <p>{{ f.description }}</p>
+
+            {% if f.impact %}
+            <h6 class="fw-bold">Impact</h6>
+            <p>{{ f.impact }}</p>
+            {% endif %}
+
+            {% if f.poc_steps %}
+            <h6 class="fw-bold">Proof of Concept</h6>
+            <ol class="mb-3">
+              {% for step in f.poc_steps %}
+              <li class="poc-step">{{ step }}</li>
+              {% endfor %}
+            </ol>
+            {% endif %}
+
+            {% if f.remediation %}
+            <h6 class="fw-bold">Remediation</h6>
+            <div class="alert alert-success py-2 px-3" style="font-size:0.9rem;">{{ f.remediation }}</div>
+            {% endif %}
+
+            {% if f.references %}
+            <h6 class="fw-bold">References</h6>
+            <ul class="mb-0">
+              {% for ref in f.references %}
+              <li><a href="{{ ref }}" target="_blank" rel="noopener">{{ ref }}</a></li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+
+            {% if f.tags %}
+            <div class="mt-3">
+              {% for tag in f.tags %}
+              <span class="tag-badge">{{ tag }}</span>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </section>
+    {% else %}
+    <div class="alert alert-success">No vulnerabilities found during this scan.</div>
+    {% endif %}
+
+    <!-- Remediation Roadmap -->
+    {% if remediation_roadmap %}
+    <section id="remediation" class="mb-5">
+      <h2 class="h5 fw-bold border-bottom pb-2">Remediation Roadmap</h2>
+      <div class="card border-0 shadow-sm">
+        <div class="card-body" style="white-space: pre-wrap;">{{ remediation_roadmap }}</div>
+      </div>
+    </section>
+    {% endif %}
+
+    <!-- Live Hosts -->
+    {% if live_hosts %}
+    <section id="live-hosts" class="mb-5">
+      <h2 class="h5 fw-bold border-bottom pb-2">
+        Live Hosts
+        <span class="badge bg-secondary ms-2">{{ live_hosts | length }}</span>
+      </h2>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover table-bordered">
+          <thead class="table-dark">
+            <tr>
+              <th>URL</th>
+              <th>Status</th>
+              <th>Title</th>
+              <th>Server</th>
+              <th>Technologies</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for h in live_hosts %}
+            <tr>
+              <td><a href="{{ h.url }}" target="_blank" rel="noopener">{{ h.url }}</a></td>
+              <td>
+                <span class="badge bg-{{ 'success' if h.status_code == 200 else 'warning' if h.status_code < 400 else 'danger' }}">
+                  {{ h.status_code }}
+                </span>
+              </td>
+              <td>{{ h.title or '–' }}</td>
+              <td>{{ h.server or '–' }}</td>
+              <td>
+                {% for tech in h.technologies[:4] %}
+                <span class="tag-badge">{{ tech }}</span>
+                {% endfor %}
+                {% if h.technologies | length > 4 %}
+                <span class="text-muted">+{{ h.technologies | length - 4 }}</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+
+    <!-- Metadata -->
+    <section id="metadata" class="mb-5">
+      <h2 class="h5 fw-bold border-bottom pb-2">Scan Metadata</h2>
+      <table class="table table-sm table-bordered" style="max-width: 480px;">
+        <tbody>
+          <tr><th>Scan ID</th><td><code>{{ scan_run.id }}</code></td></tr>
+          <tr><th>Target</th><td>{{ scan_run.target_domain }}</td></tr>
+          <tr><th>Programme</th><td>{{ scan_run.program_name }}</td></tr>
+          <tr><th>Started</th><td>{{ scan_run.started_at | format_dt }}</td></tr>
+          <tr><th>Completed</th><td>{{ scan_run.completed_at | format_dt }}</td></tr>
+          <tr><th>Status</th><td>
+            <span class="badge bg-{{ 'success' if scan_run.status == 'completed' else 'danger' }}">
+              {{ scan_run.status }}
+            </span>
+          </td></tr>
+          <tr><th>False Positives</th><td>{{ stats.total_fp }}</td></tr>
+          <tr><th>Generated</th><td>{{ generated_at | format_dt }}</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer class="text-center text-muted py-3 border-top" style="font-size:0.8rem;">
+      Generated by BugBounty AI Agent &mdash; {{ generated_at | format_dt }}
+    </footer>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+function filterFindings() {
+  const checkboxes = document.querySelectorAll('#filter-bar input[type=checkbox]');
+  const enabled = Array.from(checkboxes)
+    .filter(c => c.checked)
+    .map(c => c.id.replace('filter-', ''));
+  document.querySelectorAll('.finding-card[data-severity]').forEach(card => {
+    card.style.display = enabled.includes(card.dataset.severity) ? '' : 'none';
+  });
+}
+// Highlight active sidebar item on scroll
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    const link = document.querySelector(`.sidebar a[href="#${entry.target.id}"]`);
+    if (link) link.classList.toggle('toc-active', entry.isIntersecting);
+  });
+}, { threshold: 0.1 });
+document.querySelectorAll('section[id]').forEach(s => observer.observe(s));
+</script>
+</body>
+</html>
