@@ -297,11 +297,18 @@ class ExposureScanner:
         self.categories = categories or list(EXPOSURE_PATHS.keys())
         self._semaphore = asyncio.Semaphore(concurrent)
 
-    async def scan_hosts(self, hosts: list[str]) -> list[ExposureFinding]:
+    async def scan_hosts(
+        self,
+        hosts: list[str],
+        extra_paths: Optional[list[str]] = None,
+    ) -> list[ExposureFinding]:
         """Scan a list of live hosts for exposed sensitive endpoints.
 
         Args:
-            hosts: List of live host base URLs (e.g. https://example.com).
+            hosts:       List of live host base URLs (e.g. https://example.com).
+            extra_paths: Additional paths to probe alongside the static lists,
+                         e.g. AI-generated paths.  Reported as category
+                         ``"ai_generated"`` with no content-validation gate.
 
         Returns:
             List of exposure findings.
@@ -310,7 +317,7 @@ class ExposureScanner:
         logger.info("Exposure scanner: scanning %d hosts", len(in_scope))
 
         tasks = [
-            asyncio.create_task(self._scan_host(host))
+            asyncio.create_task(self._scan_host(host, extra_paths or []))
             for host in in_scope
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -330,7 +337,11 @@ class ExposureScanner:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _scan_host(self, host_url: str) -> list[ExposureFinding]:
+    async def _scan_host(
+        self,
+        host_url: str,
+        extra_paths: Optional[list[str]] = None,
+    ) -> list[ExposureFinding]:
         async with self._semaphore:
             # Normalise host: strip trailing slash and path
             from urllib.parse import urlparse
@@ -344,6 +355,10 @@ class ExposureScanner:
                     continue
                 for path in EXPOSURE_PATHS[category]:
                     test_pairs.append((category, path))
+
+            # Append AI-generated paths (probed without content-validation gate)
+            for path in (extra_paths or []):
+                test_pairs.append(("ai_generated", path))
 
             # Run all path checks concurrently (inner semaphore limits per-host)
             inner_sem = asyncio.Semaphore(10)

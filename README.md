@@ -2,7 +2,7 @@
 
 > AI-powered vulnerability hunting framework for unauthenticated bug bounty targets.
 
-Automates the full pipeline from subdomain discovery to confirmed vulnerability reporting, using Claude or OpenAI as the reasoning engine and purpose-built scanners for nine vulnerability classes with minimal false positives.
+Automates the full pipeline from subdomain discovery to confirmed vulnerability reporting, using Claude or OpenAI as the reasoning engine and purpose-built scanners for ten vulnerability classes with minimal false positives.
 
 ---
 
@@ -12,7 +12,9 @@ Automates the full pipeline from subdomain discovery to confirmed vulnerability 
 - [Architecture](#architecture)
 - [How It Works](#how-it-works)
   - [Recon Phase](#recon-phase)
-  - [Scan Pipeline (11 Phases)](#scan-pipeline-11-phases)
+  - [Scan Pipeline (14 Phases)](#scan-pipeline-14-phases)
+  - [Port Scanning](#port-scanning)
+  - [Service Exposure Detection](#service-exposure-detection)
   - [SSRF Detection (GET + POST + Headers)](#ssrf-detection-get--post--headers)
   - [XSS Detection](#xss-detection)
   - [CORS Misconfiguration](#cors-misconfiguration)
@@ -20,12 +22,14 @@ Automates the full pipeline from subdomain discovery to confirmed vulnerability 
   - [Open Redirect Detection](#open-redirect-detection)
   - [JavaScript Secret Scanning](#javascript-secret-scanning)
   - [Exposed Endpoint Detection](#exposed-endpoint-detection)
+  - [AI Path Generation](#ai-path-generation)
   - [AI Analysis](#ai-analysis)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Configuration](#configuration)
   - [AI Provider](#ai-provider)
   - [Scope](#scope)
+  - [Port Scanning](#port-scanning-1)
   - [SSRF Settings](#ssrf-settings)
   - [XSS Settings](#xss-settings)
   - [CORS Settings](#cors-settings)
@@ -70,40 +74,30 @@ bugbounty scan --config my-target.yaml
 
  Recon complete: 47 subdomains, 31 live hosts, 284 ports, 1,832 URLs
 
-──────────── Phase 2: Vulnerability Scanning (11 phases) ────────────
+──────────── Phase 2: Vulnerability Scanning (14 phases) ────────────
 
- [1/11] nuclei               ████████████ done
- [2/11] subdomain-takeover   ████████████ done  — 1 takeover candidate
- [3/11] exposed-endpoints    ████████████ done  — 3 exposures
- [4/11] cors-scan            ████████████ done  — 2 CORS issues
- [5/11] js-scanning          ████████████ done  — 4 secrets, 12 new URLs
- [6/11] param-discovery      ████████████ done
- [7/11] ssrf-get             ████████████ done  — 2 SSRF confirmed
- [8/11] ssrf-post            ████████████ done  — 1 SSRF (JSON body)
- [9/11] header-ssrf          ████████████ done
- [10/11] open-redirect       ████████████ done  — 1 redirect (OAuth chain)
- [11/11] xss                 ████████████ done  — 3 XSS confirmed
+ [pre]  port-url-injection   ████████████ done  — 12 new targets from open ports
+ [1/14] nuclei               ████████████ done
+ [2/14] subdomain-takeover   ████████████ done  — 1 takeover candidate
+ [3/14] exposed-endpoints    ████████████ done  — 3 exposures
+ [4/14] service-checks       ████████████ done  — 2 unauthenticated services
+ [5/14] cors-scan            ████████████ done  — 2 CORS issues
+ [6/14] js-scanning          ████████████ done  — 4 secrets, 12 new URLs
+ [7/14] ai-path-gen          ████████████ done  — 38 AI-generated paths
+ [8/14] ai-exposure          ████████████ done  — 1 hidden endpoint
+ [9/14] param-discovery      ████████████ done
+ [10/14] ssrf-get            ████████████ done  — 2 SSRF confirmed
+ [11/14] ssrf-post           ████████████ done  — 1 SSRF (JSON body)
+ [12/14] header-ssrf         ████████████ done
+ [13/14] open-redirect       ████████████ done  — 1 redirect (OAuth chain)
+ [14/14] xss                 ████████████ done  — 3 XSS confirmed
 
- Scan complete: 14 findings
-   SSRF (GET): 2 · SSRF (POST): 1 · SSRF (Headers): 0
-   XSS: 3 · CORS: 2 · Takeover: 1 · Redirect: 1 · Exposure: 3 · Nuclei: 1
+ Scan complete: 17 findings
+   SSRF: 3 · XSS: 3 · CORS: 2 · Takeover: 1 · Redirect: 1
+   Exposure: 3 · Service: 2 · AI-paths: 1 · Nuclei: 1
 
 ──────────── Phase 3: AI Analysis ────────────
- ⠼ AI Analyzer triaging 14 findings...
-
-──────────── Scan Summary ────────────
- Findings by Vulnerability Type
- ┌──────────────────┬───────┬──────────┬────────────────┐
- │ Type             │ Count │ Severity │ False Positives │
- ├──────────────────┼───────┼──────────┼────────────────┤
- │ SSRF             │ 3     │ high     │ 0              │
- │ XSS              │ 3     │ medium   │ 1              │
- │ CORS             │ 2     │ medium   │ 0              │
- │ Subdomain Tkover │ 1     │ critical │ 0              │
- │ Open Redirect    │ 1     │ medium   │ 0              │
- │ Exposed Endpoint │ 2     │ high     │ 1              │
- │ Nuclei           │ 1     │ medium   │ 1              │
- └──────────────────┴───────┴──────────┴────────────────┘
+ ⠼ AI Analyzer triaging 17 findings...
 ```
 
 **What it finds (unauthenticated):**
@@ -118,13 +112,16 @@ bugbounty scan --config my-target.yaml
 | **Subdomain takeover** | CNAME chain + 20+ service fingerprints | Body fingerprint match |
 | **Open redirect** | 52 redirect parameter names | Actual Location header |
 | **JS secret scanning** | 16 patterns (API keys, tokens, URLs) | Regex match in .js files |
-| **Exposed endpoints** | 70+ paths across 8 categories | Content validation |
+| **Exposed endpoints (static)** | 70+ paths across 8 categories | Content validation |
+| **Exposed endpoints (AI-generated)** | LLM-reasoned paths from tech stack + JS context | HTTP 2xx/403 response |
+| **Service exposure** | 22 services probed on open ports | Targeted response validators |
 
 **What makes it different:**
 - OOB (out-of-band) DNS/HTTP callbacks for SSRF — only confirmed findings are reported
-- Unescaped reflection detection for XSS — payload must appear literally in HTML
-- Every finding is re-tested before being written to the database
-- JS scanner feeds newly discovered endpoints back into the scan pipeline
+- **104 targeted ports** scanned across web, databases, K8s, containers, monitoring, and brokers
+- **Open ports feed back into all scanners** — non-standard HTTP ports are automatically included in every subsequent scan phase
+- **Service exposure checks** — unauthenticated Elasticsearch, Prometheus, Kubelet, Docker daemon, etcd, Consul, Vault, and more detected via targeted probes
+- **AI path generation** — the LLM reasons about the target's tech stack and JS-extracted routes to generate custom paths beyond static lists
 - AI triage removes remaining false positives and detects vulnerability chains
 - Reports include CWE IDs, CVSS 3.1 vectors, and ready-to-use `curl` PoC commands
 
@@ -140,7 +137,7 @@ flowchart TD
         direction TB
         PL["Planner Agent\n(recon strategy)"]
         RP["Recon Pipeline"]
-        SP["Scan Pipeline\n(11 phases)"]
+        SP["Scan Pipeline\n(14 phases)"]
         AN["Analyzer Agent\n(triage + FP removal)"]
         RR["Reporter Agent\n(CWE · CVSS · curl PoC)"]
         PL --> RP --> SP --> AN --> RR
@@ -150,35 +147,40 @@ flowchart TD
         direction LR
         SF["subfinder\namass"] --> DNS["dnsx\n(resolve)"]
         DNS --> HX["httpx\n(probe)"]
-        HX --> NB["naabu\n(ports)"]
+        HX --> NB["naabu\n(104 ports)"]
         HX --> GA["gau + waybackurls\n(URLs)"]
         GA --> KT["katana\n(crawl)"]
     end
 
-    subgraph SCAN["Scan Pipeline — 11 phases"]
+    subgraph SCAN["Scan Pipeline — 14 phases"]
         direction TB
-        NC["1· nuclei\n(template scan)"]
-        TK["2· takeover\n(CNAME + fingerprint)"]
-        EX["3· exposure\n(git·env·graphql·admin)"]
-        CO["4· CORS\n(5 bypass techniques)"]
-        JS["5· JS scanning\n(secrets + endpoints)"]
-        PD["6· param discovery\narjun"]
-        S1["7· SSRF GET\n(OOB + error-based)"]
-        S2["8· SSRF POST\n(JSON + form body)"]
-        S3["9· SSRF headers\n(14 injection headers)"]
-        RD["10· open redirect\n(52 param names)"]
-        XS["11· XSS\nreflection + dalfox"]
+        PRE["pre · port URL injection\n(extend target surface)"]
+        NC["1 · nuclei\n(template scan)"]
+        TK["2 · takeover\n(CNAME + fingerprint)"]
+        EX["3 · exposure\n(static paths)"]
+        SVC["4 · service checks\n(22 services on open ports)"]
+        CO["5 · CORS\n(5 bypass techniques)"]
+        JS["6 · JS scanning\n(secrets + endpoints)"]
+        AI_P["7 · AI path gen\n(LLM-reasoned paths)"]
+        AI_E["8 · AI exposure\n(probe AI paths)"]
+        PD["9 · param discovery\narjun"]
+        S1["10 · SSRF GET\n(OOB + error-based)"]
+        S2["11 · SSRF POST\n(JSON + form body)"]
+        S3["12 · SSRF headers\n(14 injection headers)"]
+        RD["13 · open redirect\n(52 param names)"]
+        XS["14 · XSS\nreflection + dalfox"]
     end
 
     subgraph AI["AI Layer (Claude or OpenAI)"]
         direction TB
         PLAN["Planner → ReconPlan"]
+        PATH["Path Generator → custom paths"]
         ANALYZE["Analyzer → TP/FP/Chains"]
         REPORT["Reporter → CWE·CVSS·PoC"]
     end
 
     subgraph OUT["Output"]
-        DB[("SQLite DB")]
+        DB[("PostgreSQL")]
         HTML["report.html"]
         MD["report.md"]
         JSON["report.json"]
@@ -206,7 +208,7 @@ sequenceDiagram
     participant HX as httpx
     participant NB as naabu
     participant GA as gau/katana
-    participant DB as SQLite
+    participant DB as PostgreSQL
 
     O->>SF: enumerate(domain)
     SF-->>O: [sub1.example.com, sub2.example.com, ...]
@@ -214,7 +216,7 @@ sequenceDiagram
     DNS-->>O: [valid subdomains with IPs]
     O->>HX: probe(subdomains)
     HX-->>O: [live hosts + status + tech fingerprint]
-    O->>NB: port_scan(hosts)
+    O->>NB: port_scan(hosts, 104 targeted ports)
     NB-->>O: [open ports per host]
     O->>GA: fetch_urls(domain) + crawl(live_hosts)
     GA-->>O: [1000s of historical + crawled URLs]
@@ -224,45 +226,174 @@ sequenceDiagram
 **What gets discovered:**
 - All resolvable subdomains and their IP addresses
 - Live HTTP/HTTPS services with status codes, page titles, and detected technologies (React, Spring Boot, nginx, etc.)
-- Open ports beyond 80/443
+- Open ports across 104 targeted ports (see [Port Scanning](#port-scanning))
 - Historical URLs from Wayback Machine, Common Crawl, OTX, URLScan
 - Crawled application paths and parameters
 
 ---
 
-### Scan Pipeline (11 Phases)
+### Scan Pipeline (14 Phases)
 
-The scan pipeline runs in a fixed order designed to maximise coverage and feed results from early phases into later ones. JS scanning, for example, discovers new URLs that feed into the SSRF and XSS phases.
+The scan pipeline runs in a fixed order. Open port results are processed first to extend the target surface before any phase runs. JS scanning discovers new URLs and tech context that feeds the AI path generator, and AI-generated paths feed back into the exposure scanner.
 
 ```mermaid
 flowchart LR
-    subgraph FAST["Fast / High-Value First"]
+    subgraph PRE["Pre-scan"]
+        P0["port URL injection\n(extend target_urls)"]
+    end
+
+    subgraph FAST["Discovery"]
         P1["1 · nuclei\ntemplates"]
         P2["2 · subdomain\ntakeover"]
-        P3["3 · exposed\nendpoints"]
-        P4["4 · CORS\nmisconfig"]
-        P5["5 · JS\nscanning"]
+        P3["3 · static\nexposure"]
+        P4["4 · service\nchecks"]
+        P5["5 · CORS\nmisconfig"]
+        P6["6 · JS\nscanning"]
+        P7["7 · AI path\ngeneration"]
+        P8["8 · AI\nexposure"]
     end
 
     subgraph PARAM["Parameter Prep"]
-        P6["6 · param\ndiscovery"]
+        P9["9 · param\ndiscovery"]
     end
 
     subgraph SSRF_BLOCK["SSRF (three vectors)"]
-        P7["7 · SSRF GET\nURL params"]
-        P8["8 · SSRF POST\nJSON / form body"]
-        P9["9 · SSRF headers\n14 injection headers"]
+        P10["10 · SSRF GET\nURL params"]
+        P11["11 · SSRF POST\nJSON / form body"]
+        P12["12 · SSRF headers\n14 injection headers"]
     end
 
     subgraph INJECT["Injection"]
-        P10["10 · open\nredirect"]
-        P11["11 · XSS\nreflection + dalfox"]
+        P13["13 · open\nredirect"]
+        P14["14 · XSS\nreflection + dalfox"]
     end
 
-    FAST --> PARAM --> SSRF_BLOCK --> INJECT
+    PRE --> FAST --> PARAM --> SSRF_BLOCK --> INJECT
 
-    P5 --"new URLs"--> P7
-    P5 --"new URLs"--> P11
+    P6 --"new URLs + tech context"--> P7
+    P7 --"AI paths"--> P8
+    P0 --"port-derived URLs"--> P10
+    P0 --"port-derived URLs"--> P14
+```
+
+---
+
+### Port Scanning
+
+naabu is configured with **104 targeted ports** covering every major service category across on-premises, cloud, and hybrid environments. This replaces the generic top-1000 scan, which misses critical internal ports (etcd, Kubelet, Docker daemon) while wasting time on rarely used ones.
+
+| Category | Ports |
+|---|---|
+| Standard web | 80, 443 |
+| HTTP alternates | 8000–8889 range (18 ports) |
+| HTTPS alternates | 4443, 8443, 9443 |
+| Dev/framework servers | 3000, 3001, 4000–4001, 4200, 5000–5001, 7000–7071, 9000–10000 range |
+| **Kubernetes** | 6443 (API), 2379–2380 (etcd), 10250 (Kubelet), 10255 (Kubelet RO), 10256, 8001 |
+| **Container/Docker** | 2375 (daemon unauth), 2376 (daemon TLS), 9323 (metrics), 4194 (cAdvisor) |
+| Relational databases | 3306 (MySQL), 5432 (PostgreSQL) |
+| Key-value/cache | 6379–6380 (Redis), 11211 (Memcached) |
+| Document/search | 27017–27018 (MongoDB), 9200/9300 (Elasticsearch), 5984 (CouchDB), 8123 (ClickHouse) |
+| Graph/time-series | 7474/7687 (Neo4j), 8086 (InfluxDB) |
+| Wide-column/coordination | 9042 (Cassandra), 2181 (ZooKeeper) |
+| Message brokers | 5672/15672 (RabbitMQ), 9092 (Kafka), 61616/8161 (ActiveMQ), 4222/8222 (NATS), 6650 (Pulsar) |
+| **Monitoring/observability** | 9090/9091/9093/9094 (Prometheus/Alertmanager), 5601 (Kibana), 16686/14268 (Jaeger), 9411 (Zipkin), 4317/4318 (OTLP) |
+| HashiCorp stack | 8200/8201 (Vault), 8300/8500 (Consul), 4646 (Nomad) |
+| CI/CD | 9418 (Git daemon), 2222 (Gitea/alt SSH) |
+| Standard services | 21 (FTP), 22 (SSH), 23 (Telnet), 25 (SMTP), 53 (DNS), 110/143 (POP3/IMAP), 389 (LDAP), 445 (SMB), 3389 (RDP), 5900 (VNC), 111/2049 (NFS) |
+
+**Open ports feed the entire pipeline.** At scan start, the pipeline loads all discovered open ports and constructs `http://host:port/` or `https://host:port/` URLs for every HTTP-capable port. These are injected into `target_urls` before Phase 1 runs, so the exposure scanner, CORS scanner, XSS, and SSRF phases all automatically cover non-standard ports without any extra configuration.
+
+The custom port list can be overridden or extended in `config.yaml`:
+
+```yaml
+tools:
+  naabu:
+    ports: [80, 443, 8080, 8443, 9200, 10250]  # override with custom list
+    top_ports: 1000  # fallback if ports is empty
+```
+
+---
+
+### Service Exposure Detection
+
+After the static exposure scan (Phase 3), the pipeline runs targeted probes against every open port that maps to a known service (Phase 4). Unlike the generic exposure scanner which probes URL paths, this checker sends service-specific requests and validates the response content.
+
+**22 services checked:**
+
+| Service | Port | Probe | Severity |
+|---|---|---|---|
+| Kubernetes API | 6443 | `GET /api/v1/namespaces` (HTTPS) | Critical |
+| etcd | 2379 | `GET /health` | Critical |
+| Kubelet API | 10250 | `GET /pods` (HTTPS) | Critical |
+| Docker daemon (unauth) | 2375 | `GET /info` | Critical |
+| Docker daemon (TLS) | 2376 | `GET /info` (HTTPS) | Critical |
+| CouchDB | 5984 | `GET /_all_dbs` | Critical |
+| Elasticsearch | 9200 | `GET /` | High |
+| Kibana | 5601 | `GET /api/status` | High |
+| Prometheus | 9090 | `GET /api/v1/targets` | High |
+| Grafana | 3000 | `GET /api/health` | High |
+| RabbitMQ Management | 15672 | `GET /api/overview` | High |
+| Consul | 8500 | `GET /v1/catalog/services` | High |
+| HashiCorp Nomad | 4646 | `GET /v1/jobs` | High |
+| Kubelet (read-only) | 10255 | `GET /pods` | High |
+| InfluxDB | 8086 | `GET /query?q=SHOW+DATABASES` | High |
+| ClickHouse | 8123 | `GET /?query=SELECT+1` | High |
+| Neo4j Browser | 7474 | `GET /browser/` | High |
+| ActiveMQ Web Console | 8161 | `GET /admin/` | High |
+| HashiCorp Vault | 8200 | `GET /v1/sys/health` | Medium |
+| Alertmanager | 9093 | `GET /api/v2/status` | Medium |
+| Jaeger UI | 16686 | `GET /api/services` | Medium |
+| Zipkin | 9411 | `GET /api/v2/services` | Medium |
+| NATS Monitoring | 8222 | `GET /varz` | Medium |
+| Docker metrics | 9323 | `GET /metrics` | Medium |
+| cAdvisor | 4194 | `GET /api/v2.0/machine` | Medium |
+| Prometheus push gateway | 9091 | `GET /metrics` | Medium |
+
+Every probe uses a content validator — a generic `200 OK` is not enough. Elasticsearch must return `cluster_name` and `version`; Kubelet must return pod specs with `"items"`; Docker must return `DockerRootDir` or `ServerVersion`. This eliminates custom error pages from false-positive findings.
+
+Findings are tagged `CWE-306` (Missing Authentication for Critical Function) with CVSS scores from 5.3 (metrics endpoints) to 9.8 (unauthenticated Docker daemon or Kubernetes API).
+
+---
+
+### AI Path Generation
+
+After JavaScript scanning (Phase 6), the framework calls the configured LLM with context about what was found and asks it to generate additional paths to probe. This goes beyond the static list to discover target-specific hidden endpoints.
+
+```mermaid
+flowchart TD
+    CONTEXT["Context gathered from recon"] --> LLM
+
+    subgraph CONTEXT["Context inputs"]
+        direction LR
+        TECH["Tech stack\ndetected per host\n(React, Spring Boot, nginx ...)"]
+        JSROUTES["JS-extracted paths\n(top 60 by relevance score)"]
+        URLPAT["URL patterns\n(normalised structure:\n/api/v2/{id}/, /internal/ ...)"]
+        CONV["Naming conventions\n(snake_case / kebab-case / camelCase)"]
+    end
+
+    LLM["LLM reasoning\n(via submit_paths tool call)"] --> PATHS
+
+    subgraph PATHS["Generated paths"]
+        direction TB
+        TECH_P["Framework-specific paths\n(Django admin, Spring Actuator ...)"]
+        INFRA_P["Internal tool paths\n(/prometheus/, /grafana/, /consul/ ...)"]
+        CONV_P["Naming-convention paths\n(matches app style)"]
+        VAR_P["API version variants\n(/api/v2/admin/, /api/internal/ ...)"]
+    end
+
+    PATHS --> VALIDATE["Path validation\n(must start with /, no traversal,\nURL-safe chars, not already known)"]
+    VALIDATE --> PROBE["Probe against every live host\n(any 2xx or 403 → finding)"]
+    PROBE --> DB[("Save to DB")]
+```
+
+The LLM receives the full tech stack summary, up to 40 normalised URL patterns, and the 60 highest-signal JS paths ranked by keywords (`admin`, `internal`, `dashboard`, `monitor`, etc.). It uses the `submit_paths` tool to return a structured JSON array, avoiding free-text parsing. Already-known paths are excluded from the prompt to prevent duplication.
+
+AI path generation can be disabled:
+
+```yaml
+vuln:
+  exposure:
+    ai_path_generation: false
 ```
 
 ---
@@ -273,7 +404,7 @@ SSRF is tested across three distinct injection vectors. All three share the same
 
 ```mermaid
 flowchart TD
-    START["All discovered URLs\n+ parameterised endpoints"] --> VECTOR
+    START["All discovered URLs\n+ parameterised endpoints\n+ port-derived URLs"] --> VECTOR
 
     VECTOR{"Injection\nvector"}
 
@@ -477,7 +608,7 @@ flowchart TD
 
 ### JavaScript Secret Scanning
 
-Every `.js` file discovered during recon is fetched and scanned for hardcoded secrets and hidden endpoints. Newly discovered endpoints are fed back into the SSRF and XSS phases.
+Every `.js` file discovered during recon is fetched and scanned for hardcoded secrets and hidden endpoints. Newly discovered endpoints and tech context are fed into the AI path generator.
 
 ```mermaid
 flowchart LR
@@ -505,7 +636,7 @@ flowchart LR
     end
 
     SECRETS --> FINDINGS["JS findings\n(secret truncated:\nfirst8chars...)"]
-    ENDPOINTS --> NEW_URLS["New URLs injected\ninto scan pipeline\nfor SSRF + XSS testing"]
+    ENDPOINTS --> NEW_URLS["New URLs + context\nfed into AI path generator\nand SSRF + XSS phases"]
 
     FINDINGS --> DB[("Save to DB")]
 ```
@@ -517,7 +648,7 @@ Secrets are truncated to the first 8 characters followed by `...` — enough to 
 
 ### Exposed Endpoint Detection
 
-Eight categories of common sensitive path exposure are checked, with content-based validation to eliminate `200 OK` false positives from custom error pages.
+Eight categories of common sensitive path exposure are checked with content-based validation, followed by an AI-generated pass for target-specific paths.
 
 | Category | Example paths | Content validation |
 |---|---|---|
@@ -528,7 +659,10 @@ Eight categories of common sensitive path exposure are checked, with content-bas
 | **spring_actuator** | `/actuator/env`, `/actuator/beans` | Must contain `activeProfiles` or `beans` |
 | **debug** | `/debug`, `/phpinfo.php`, `/server-info` | Must contain debug-specific keywords |
 | **backup** | `/.DS_Store`, `/backup.zip`, `/db.sql.gz` | File type / size validation |
-| **admin** | `/admin`, `/wp-admin`, `/administrator` | Must not be a generic 200 |
+| **admin** | `/admin`, `/wp-admin`, `/administrator` | Must contain login/credential keywords |
+| **ai_generated** | LLM-reasoned paths | Any 2xx or 403 response |
+
+See [AI Path Generation](#ai-path-generation) for how the `ai_generated` category works.
 
 ---
 
@@ -547,28 +681,17 @@ sequenceDiagram
     A->>LLM: "Triage these N findings..."
     loop For each finding
         LLM->>LLM: tool_use: assess_finding(finding)
-        Note over LLM: SSRF OOB confirmed → fp_likelihood: low<br/>SSRF error-based → fp_likelihood: medium<br/>XSS dalfox confirmed → fp_likelihood: low<br/>CORS + credentials → fp_likelihood: low<br/>Takeover + fingerprint → fp_likelihood: low
+        Note over LLM: SSRF OOB confirmed → fp_likelihood: low<br/>SSRF error-based → fp_likelihood: medium<br/>XSS dalfox confirmed → fp_likelihood: low<br/>CORS + credentials → fp_likelihood: low<br/>Takeover + fingerprint → fp_likelihood: low<br/>Service unauthenticated → fp_likelihood: low
         LLM->>LLM: tool_use: suggest_poc(vuln_type, host)
     end
     LLM->>LLM: tool_use: check_vuln_chain(all_findings)
-    Note over LLM: XSS + CSRF → Account Takeover<br/>SSRF + IMDS → Credential Theft<br/>Open Redirect + OAuth → Token Theft<br/>CORS + credentials → Cross-origin data access
+    Note over LLM: XSS + CSRF → Account Takeover<br/>SSRF + IMDS → Credential Theft<br/>Open Redirect + OAuth → Token Theft<br/>CORS + credentials → Cross-origin data access<br/>Kubelet unauth → Container escape
     LLM-->>A: {true_positive_ids, false_positive_ids, chains, summary}
     A->>DB: update findings (is_false_positive flag)
     A-->>O: AnalysisResult
 
     O->>LLM: Reporter Agent: format findings for submission
     LLM-->>O: CWE · CVSS 3.1 vector · curl PoC · remediation · business impact
-```
-
-**Provider-agnostic tool-use loop:**
-
-Both Claude and OpenAI use the same agentic loop logic. The `LLMProvider` abstraction normalises their different wire formats:
-
-```
-Claude:   stop_reason="tool_use" → content[].type="tool_use"
-OpenAI:   finish_reason="tool_calls" → message.tool_calls[]
-
-Both normalised to → NormalizedResponse(tool_calls=[NormalizedToolUse(...)])
 ```
 
 ---
@@ -579,6 +702,11 @@ Both normalised to → NormalizedResponse(tool_calls=[NormalizedToolUse(...)])
 
 - Python 3.11+
 
+### PostgreSQL
+
+- PostgreSQL 14+ (any edition — RDS, Azure Database, on-prem, Docker)
+- Set `DATABASE_URL` in your `.env` file (see [Installation](#installation))
+
 ### External tools (all optional — framework degrades gracefully)
 
 | Tool | Purpose | Install |
@@ -587,7 +715,7 @@ Both normalised to → NormalizedResponse(tool_calls=[NormalizedToolUse(...)])
 | `amass` | Active/passive subdomain enumeration | `go install github.com/owasp-amass/amass/v4/...@master` |
 | `dnsx` | DNS resolution and validation | `go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest` |
 | `httpx` | HTTP probing and tech detection | `go install github.com/projectdiscovery/httpx/cmd/httpx@latest` |
-| `naabu` | Port scanning | `go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest` |
+| `naabu` | Port scanning (104 targeted ports) | `go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest` |
 | `nuclei` | Template-based vulnerability scanning | `go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
 | `gau` | Historical URL discovery | `go install github.com/lc/gau/v2/cmd/gau@latest` |
 | `katana` | Web crawler | `go install github.com/projectdiscovery/katana/cmd/katana@latest` |
@@ -613,38 +741,54 @@ nuclei -update-templates
 # Clone or download
 cd bugbounty-agent
 
-# Install Python dependencies
+# Install all external tools (Go + Python)
+./install-tools.sh
+
+# Check what is/isn't installed without making changes
+./install-tools.sh --check
+
+# Install Python dependencies for the framework itself
 pip install -e .
 
-# Set API keys
+# Set API keys and database
 cp .env.example .env
-# Edit .env and add your key(s)
+# Edit .env:
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   DATABASE_URL=postgresql://bugbounty:password@localhost:5432/bugbounty
 
 # Verify tools
 bugbounty check-tools
 ```
 
-```
-Tool Availability
-┌───────────────────┬───────────────┬──────────────────────────────────────┬───────────┐
-│ Tool              │ Category      │ Purpose                              │ Status    │
-├───────────────────┼───────────────┼──────────────────────────────────────┼───────────┤
-│ subfinder         │ RECON         │ Subdomain enumeration                │ Installed │
-│ httpx             │ RECON         │ HTTP probing                         │ Installed │
-│ dalfox            │ XSS           │ XSS scanner (primary)                │ Installed │
-│ interactsh-client │ SSRF          │ OOB interaction server               │ Installed │
-│ arjun             │ PARAMS        │ Hidden parameter discovery           │ Not found │
-│ nuclei            │ SCANNING      │ Template-based vuln scanner          │ Installed │
-└───────────────────┴───────────────┴──────────────────────────────────────┴───────────┘
+### PostgreSQL setup
 
-API Keys
-┌────────────────────┬────────────┐
-│ Provider           │ Status     │
-├────────────────────┼────────────┤
-│ Claude (Anthropic) │ Configured │
-│ OpenAI             │ Not set    │
-└────────────────────┴────────────┘
+Create the database before the first scan:
+
+```bash
+# Local PostgreSQL
+psql -U postgres -c "CREATE USER bugbounty WITH PASSWORD 'password';"
+psql -U postgres -c "CREATE DATABASE bugbounty OWNER bugbounty;"
+
+# Docker (quick dev setup)
+docker run -d --name bb-db \
+  -e POSTGRES_USER=bugbounty \
+  -e POSTGRES_PASSWORD=password \
+  -e POSTGRES_DB=bugbounty \
+  -p 5432:5432 postgres:16-alpine
 ```
+
+The schema (all tables) is created automatically on first run. No migrations needed.
+
+The install script accepts flags to target a subset of tools:
+
+```bash
+./install-tools.sh --go      # Go tools only (subfinder, httpx, dalfox, etc.)
+./install-tools.sh --python  # Python tools only (arjun)
+./install-tools.sh --check   # Print install status, make no changes
+```
+
+> **Prerequisites:** [Go 1.21+](https://go.dev/dl/) and Python 3.11+.
+> After installing Go tools, ensure `$(go env GOPATH)/bin` is in your `PATH`.
 
 ---
 
@@ -682,6 +826,9 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 # For OpenAI
 OPENAI_API_KEY=sk-...
+
+# PostgreSQL
+DATABASE_URL=postgresql://bugbounty:password@localhost:5432/bugbounty
 ```
 
 ### Scope
@@ -703,6 +850,26 @@ scope:
 
 > Out-of-scope rules always take precedence over in-scope wildcards.
 
+### Port Scanning
+
+```yaml
+tools:
+  naabu:
+    enabled: true
+    # Custom port list — covers web, databases, K8s, containers, monitoring,
+    # message brokers, and standard services (104 ports by default).
+    # Set to [] to fall back to top_ports.
+    ports:
+      - 80
+      - 443
+      - 8080
+      - 9200   # Elasticsearch
+      - 10250  # Kubelet
+      # ... add more as needed
+    top_ports: 1000   # used only when ports is empty
+    timeout: 300
+```
+
 ### SSRF Settings
 
 ```yaml
@@ -718,14 +885,8 @@ vuln:
       - "service_url"
       - "integration_endpoint"
 
-  ssrf_post:
-    enabled: true
-    concurrent: 5
-    timeout: 10.0
-
   header_injection:
     enabled: true
-    oob_wait_seconds: 10.0
     concurrent: 3
     timeout: 10.0
 ```
@@ -752,7 +913,6 @@ vuln:
     enabled: true
     concurrent: 10
     timeout: 10.0
-    verify_critical: true           # re-verify high/critical findings
 ```
 
 ### Subdomain Takeover Settings
@@ -763,7 +923,6 @@ vuln:
     enabled: true
     concurrent: 20
     timeout: 10.0
-    dns_timeout: 5.0
 ```
 
 ### Open Redirect Settings
@@ -774,7 +933,6 @@ vuln:
     enabled: true
     concurrent: 10
     timeout: 10.0
-    max_redirects: 5
     verify_findings: true
 ```
 
@@ -784,9 +942,8 @@ vuln:
 vuln:
   js_scanner:
     enabled: true
-    concurrent: 10
-    timeout: 15.0
-    max_js_size_kb: 2048            # skip minified bundles larger than this
+    max_js_files: 100
+    timeout: 10.0
 ```
 
 ### Exposed Endpoint Settings
@@ -796,7 +953,7 @@ vuln:
   exposure:
     enabled: true
     concurrent: 20
-    timeout: 10.0
+    timeout: 8.0
     categories:
       - git
       - env
@@ -806,6 +963,8 @@ vuln:
       - debug
       - backup
       - admin
+    # LLM-generated paths based on tech stack and JS context
+    ai_path_generation: true
 ```
 
 ---
@@ -875,14 +1034,14 @@ bugbounty scan --config my-target.yaml --verbose
 
 ## False Positive Minimisation
 
-This is a first-class concern. Every layer of the pipeline applies FP reduction, with vulnerability-specific logic for each scanner.
+This is a first-class concern. Every layer of the pipeline applies FP reduction.
 
 ```mermaid
 flowchart LR
-    RAW["Raw findings\n(9 scanner types)"]
+    RAW["Raw findings\n(10 scanner types)"]
 
     RAW --> L1["Layer 1\nScope validation\nEvery result checked\nbefore it's saved"]
-    L1 --> L2["Layer 2\nIn-tool FP filtering\nSSRF: OOB-only or re-verified\nXSS: unescaped context check\nCORS: credentials present\nTakeover: body fingerprint\nExposure: content validation\nRedirect: actual Location header"]
+    L1 --> L2["Layer 2\nIn-tool FP filtering\nSSRF: OOB-only or re-verified\nXSS: unescaped context check\nCORS: credentials present\nTakeover: body fingerprint\nExposure: content validation\nService: response body validator\nRedirect: actual Location header"]
     L2 --> L3["Layer 3\nRe-verification pass\nEach finding re-tested\nbefore writing to DB"]
     L3 --> L4["Layer 4\nAI triage\nFP likelihood scored\nper vulnerability class"]
     L4 --> OUT["Confirmed findings\nready for submission"]
@@ -898,10 +1057,12 @@ flowchart LR
 | CORS with `Access-Control-Allow-Credentials: true` | +2 |
 | Subdomain takeover fingerprint matched | +2 |
 | Open redirect: actual Location header match | +2 |
+| Service: content validator passed (e.g. Elasticsearch cluster_name) | +2 |
 | Internal IP found in response body | +2 |
 | `.git/config` with `[core]` present | +2 |
 | `.env` with `KEY=VALUE` present | +2 |
 | JS secret pattern matched | +1 |
+| AI-generated path: 2xx response | +1 |
 | Error-based SSRF (not reproducible) | +1 FP indicator |
 | Nuclei XSS without payload confirmation | +1 FP indicator |
 | Informational/detection nuclei template | +2 FP indicators |
@@ -925,7 +1086,7 @@ A self-contained Bootstrap 5 report with:
 - Ready-to-use `curl` PoC command for SSRF, CORS, and redirect findings
 - Numbered PoC reproduction steps
 - Remediation guidance
-- Vulnerability chain highlights (e.g. SSRF → IMDS → credential theft)
+- Vulnerability chain highlights (e.g. SSRF → IMDS → credential theft, Kubelet unauth → container exec)
 - Filterable findings table by severity
 
 ```
@@ -934,39 +1095,6 @@ results/
     ├── report.html     ← main report (open in browser)
     ├── report.md       ← markdown (paste into Jira/Confluence)
     └── report.json     ← machine-readable (integrate with other tools)
-```
-
-### JSON Schema
-
-Each finding in `report.json`:
-
-```json
-{
-  "id": "uuid",
-  "template_id": "ssrf-oob_interaction",
-  "name": "Server-Side Request Forgery (SSRF)",
-  "severity": "high",
-  "cvss_score": 8.6,
-  "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N",
-  "cwe_id": "CWE-918",
-  "host": "https://api.example.com",
-  "matched_at": "https://api.example.com/fetch?url=...",
-  "description": "SSRF via parameter 'url'. OOB HTTP callback received.",
-  "tags": ["ssrf", "oob"],
-  "confidence": "confirmed",
-  "evidence_type": "oob_interaction",
-  "curl_poc": "curl -s 'https://api.example.com/fetch?url=http://169.254.169.254/latest/meta-data/'",
-  "poc_steps": [
-    "1. Navigate to: https://api.example.com/fetch",
-    "2. Set up an interactsh listener: interactsh-client",
-    "3. Inject your OOB URL into the 'url' parameter: ?url=http://abc123.oast.pro",
-    "4. Observe DNS/HTTP callback confirming SSRF",
-    "5. Escalate: inject http://169.254.169.254/latest/meta-data/ for AWS credential access"
-  ],
-  "business_impact": "An attacker can force the server to make requests to internal services or cloud IMDS, potentially leaking AWS credentials and enabling full account compromise.",
-  "remediation": "Implement a strict allowlist of permitted URLs/domains. Disable outbound HTTP from application servers where not required.",
-  "is_false_positive": false
-}
 ```
 
 **CWE and CVSS coverage:**
@@ -982,6 +1110,13 @@ Each finding in `report.json`:
 | Open redirect (plain) | CWE-601 | 4.7 |
 | Exposed `.git` / `.env` | CWE-538 / CWE-312 | 7.5 |
 | JS secret exposure | CWE-312 | 7.5 |
+| Service: Docker daemon unauth | CWE-306 | 9.8 |
+| Service: Kubernetes API unauth | CWE-306 | 9.8 |
+| Service: etcd unauth | CWE-306 | 9.8 |
+| Service: Kubelet API unauth | CWE-306 | 9.8 |
+| Service: Elasticsearch unauth | CWE-306 | 8.5 |
+| Service: Prometheus / Grafana | CWE-306 | 5.3–8.5 |
+| AI-identified exposed path | CWE-200 | 5.3 |
 
 ---
 
@@ -1003,7 +1138,7 @@ bugbounty-agent/
 │   │
 │   ├── tools/
 │   │   ├── base.py              # BaseTool: subprocess runner, scope check, timing
-│   │   ├── recon.py             # subfinder, amass, dnsx, httpx, naabu
+│   │   ├── recon.py             # subfinder, amass, dnsx, httpx, naabu (104 ports)
 │   │   ├── scanner.py           # nuclei (template scan)
 │   │   ├── params.py            # ParamExtractor + arjun wrapper
 │   │   ├── ssrf.py              # SSRFScanner (GET) + PostSSRFScanner (POST/JSON)
@@ -1013,7 +1148,9 @@ bugbounty-agent/
 │   │   ├── redirect.py          # OpenRedirectScanner (52 params, OAuth detection)
 │   │   ├── headers.py           # HeaderInjectionScanner (14 SSRF headers)
 │   │   ├── js_scanner.py        # JSScanner (16 secret patterns + endpoint extraction)
-│   │   ├── exposure.py          # ExposureScanner (8 categories, content validation)
+│   │   ├── exposure.py          # ExposureScanner (8 categories + AI-generated paths)
+│   │   ├── port_service_checker.py  # PortServiceChecker (22 services on open ports)
+│   │   ├── ai_path_generator.py     # AIPathGenerator (LLM-reasoned path generation)
 │   │   ├── fuzzer.py            # ffuf, dalfox (legacy)
 │   │   └── discovery.py         # gau, katana, waybackurls
 │   │
@@ -1024,13 +1161,13 @@ bugbounty-agent/
 │   │   └── reporter.py          # ReporterAgent → CWE, CVSS, curl PoC, remediation
 │   │
 │   ├── pipeline/
-│   │   ├── recon.py             # ReconPipeline: subdomain → live hosts → URLs
-│   │   ├── scan.py              # ScanPipeline: 11-phase vulnerability scan
+│   │   ├── recon.py             # ReconPipeline: subdomain → live hosts → ports → URLs
+│   │   ├── scan.py              # ScanPipeline: 14-phase vulnerability scan
 │   │   └── orchestrator.py      # Orchestrator: end-to-end coordinator
 │   │
 │   ├── db/
-│   │   ├── models.py            # Pydantic models: Finding, LiveHost, ScanRun, ...
-│   │   └── store.py             # DataStore: aiosqlite CRUD + deduplication
+│   │   ├── models.py            # Pydantic models: Finding, LiveHost, OpenPort, ...
+│   │   └── store.py             # DataStore: asyncpg PostgreSQL CRUD + deduplication
 │   │
 │   ├── reporting/
 │   │   ├── generator.py         # ReportGenerator: Jinja2 → HTML/MD/JSON
@@ -1043,7 +1180,7 @@ bugbounty-agent/
 ├── results/                     # Scan output (gitignored)
 ├── pyproject.toml
 ├── requirements.txt
-└── .env.example
+└── .env.example                 # ANTHROPIC_API_KEY, OPENAI_API_KEY, DATABASE_URL
 ```
 
 ---

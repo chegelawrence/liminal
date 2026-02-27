@@ -307,6 +307,7 @@ class NaabuTool(BaseTool):
     async def _execute(
         self,
         hosts: list[str],
+        ports: Optional[list[int]] = None,
         top_ports: int = 1000,
         timeout: int = 300,
     ) -> tuple[bool, str, str]:
@@ -319,13 +320,11 @@ class NaabuTool(BaseTool):
 
         input_file = _write_tmp(in_scope)
         try:
-            cmd = [
-                "naabu",
-                "-l", input_file,
-                "-top-ports", str(top_ports),
-                "-json",
-                "-silent",
-            ]
+            if ports:
+                port_arg = ",".join(str(p) for p in sorted(set(ports)))
+                cmd = ["naabu", "-l", input_file, "-p", port_arg, "-json", "-silent"]
+            else:
+                cmd = ["naabu", "-l", input_file, "-top-ports", str(top_ports), "-json", "-silent"]
             rc, stdout, stderr = await self._run_subprocess(cmd, timeout=timeout)
             if rc == -2:
                 return True, "", stderr
@@ -336,11 +335,12 @@ class NaabuTool(BaseTool):
     async def scan(
         self,
         hosts: list[str],
+        ports: Optional[list[int]] = None,
         top_ports: int = 1000,
         timeout: int = 300,
     ) -> list[dict]:
         """Return list of dicts with 'host', 'port', 'protocol'."""
-        result = await self.run(hosts=hosts, top_ports=top_ports, timeout=timeout)
+        result = await self.run(hosts=hosts, ports=ports, top_ports=top_ports, timeout=timeout)
         if not result.raw_output:
             return []
 

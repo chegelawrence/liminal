@@ -123,6 +123,14 @@ def scan(
         )
         sys.exit(1)
 
+    # Check for database DSN
+    if not app_config.db_dsn:
+        console.print(
+            "[red]Error:[/red] DATABASE_URL is not set. "
+            "Set it in your environment or .env file."
+        )
+        sys.exit(1)
+
     # Override output directory if provided
     if output:
         app_config.output.results_dir = output
@@ -181,10 +189,8 @@ def report(scan_run_id: str, fmt: str, config: str) -> None:
     if not results_dir.is_absolute():
         results_dir = Path.cwd() / results_dir
 
-    db_path = str(results_dir / "scans.db")
-
     async def _gen() -> None:
-        store = DataStore(db_path)
+        store = DataStore(app_config.db_dsn)
         await store.initialize()
 
         scan_run = await store.get_scan_run(scan_run_id)
@@ -253,18 +259,8 @@ def list_scans(config: str) -> None:
         console.print(f"[red]Configuration error:[/red] {exc}")
         sys.exit(1)
 
-    results_dir = Path(app_config.output.results_dir).expanduser()
-    if not results_dir.is_absolute():
-        results_dir = Path.cwd() / results_dir
-
-    db_path = str(results_dir / "scans.db")
-
-    if not Path(db_path).exists():
-        console.print("[yellow]No scan database found. Run a scan first.[/yellow]")
-        return
-
     async def _list() -> None:
-        store = DataStore(db_path)
+        store = DataStore(app_config.db_dsn)
         await store.initialize()
         runs = await store.list_scan_runs()
         await store.close()

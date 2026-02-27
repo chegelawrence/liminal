@@ -213,10 +213,12 @@ class ReconPipeline:
         logger.info("[recon] Phase 4: Port scanning %d hosts", len(resolved_hosts))
 
         if resolved_hosts and self.config.tools.naabu.enabled:
+            naabu_cfg = self.config.tools.naabu
             port_data = await self.naabu.scan(
                 resolved_hosts,
-                top_ports=self.config.tools.naabu.top_ports,
-                timeout=self.config.tools.naabu.timeout,
+                ports=naabu_cfg.ports if naabu_cfg.ports else None,
+                top_ports=naabu_cfg.top_ports,
+                timeout=naabu_cfg.timeout,
             )
             for p in port_data:
                 port_model = OpenPort(

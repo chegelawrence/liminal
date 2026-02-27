@@ -76,8 +76,7 @@ class Orchestrator:
             results_dir = Path.cwd() / results_dir
         self.results_dir = results_dir
 
-        db_path = str(results_dir / "scans.db")
-        self.store = DataStore(db_path)
+        self.store = DataStore(config.db_dsn)
         self.scope = ScopeValidator(
             in_scope=config.scope.in_scope,
             out_of_scope=config.scope.out_of_scope,

@@ -56,6 +56,87 @@ class HttpxConfig(BaseModel):
 
 class NaabuConfig(BaseModel):
     enabled: bool = True
+    # Explicit port list (used when non-empty; overrides top_ports).
+    # Covers web services, databases, message brokers, Kubernetes/containers,
+    # monitoring stacks, and standard services across on-prem/cloud/hybrid.
+    ports: list[int] = Field(default_factory=lambda: [
+        # ── Standard web ──────────────────────────────────────────────
+        80, 443,
+        # ── HTTP alternate ────────────────────────────────────────────
+        8000, 8001, 8008, 8009, 8080, 8081, 8082, 8083, 8088, 8090,
+        8091, 8095, 8096, 8099, 8100, 8180, 8888, 8889,
+        # ── HTTPS alternate ───────────────────────────────────────────
+        4443, 8443, 9443,
+        # ── Dev / framework servers ───────────────────────────────────
+        3000, 3001, 4000, 4001, 4200, 5000, 5001,
+        7000, 7001, 7070, 7071,
+        9000, 9001, 9080, 9099, 9100, 10000,
+        # ── Kubernetes ────────────────────────────────────────────────
+        6443,   # K8s API server (HTTPS)
+        2379,   # etcd client
+        2380,   # etcd peer
+        10250,  # Kubelet API (HTTPS)
+        10255,  # Kubelet read-only (HTTP, deprecated but still common)
+        10256,  # kube-proxy health
+        8001,   # kubectl proxy
+        # ── Container / Docker ────────────────────────────────────────
+        2375,   # Docker daemon (unauthenticated, HTTP)
+        2376,   # Docker daemon (TLS)
+        9323,   # Docker metrics
+        4194,   # cAdvisor
+        # ── Relational databases ──────────────────────────────────────
+        3306,   # MySQL / MariaDB
+        5432,   # PostgreSQL
+        # ── Key-value / cache ─────────────────────────────────────────
+        6379,   # Redis
+        6380,   # Redis TLS
+        11211,  # Memcached
+        # ── Document / search databases ───────────────────────────────
+        27017, 27018,  # MongoDB
+        9200, 9300,    # Elasticsearch
+        5984,          # CouchDB
+        8123,          # ClickHouse HTTP interface
+        # ── Graph / time-series databases ─────────────────────────────
+        7474, 7687,  # Neo4j HTTP / Bolt
+        8086,        # InfluxDB
+        # ── Wide-column / coordination ────────────────────────────────
+        9042,  # Cassandra CQL
+        2181,  # ZooKeeper
+        # ── Message brokers ───────────────────────────────────────────
+        5672,  15672,  # RabbitMQ AMQP / management HTTP
+        9092,          # Kafka
+        61616, 8161,   # ActiveMQ STOMP / web console
+        4222,  8222,   # NATS client / monitoring HTTP
+        6650,          # Apache Pulsar
+        # ── Monitoring / observability ────────────────────────────────
+        9090,  9091,  9093, 9094,  # Prometheus / Alertmanager
+        5601,                      # Kibana
+        16686, 14268,              # Jaeger UI / collector
+        9411,                      # Zipkin
+        4317,  4318,               # OTLP gRPC / HTTP
+        # ── HashiCorp stack ───────────────────────────────────────────
+        8200, 8201,  # Vault HTTP / cluster TLS
+        8300, 8500,  # Consul RPC / HTTP
+        4646,        # Nomad HTTP
+        # ── CI/CD ─────────────────────────────────────────────────────
+        9418,  # Git daemon
+        2222,  # Gitea / alternative SSH
+        # ── Standard services ─────────────────────────────────────────
+        21,    # FTP
+        22,    # SSH
+        23,    # Telnet
+        25,    # SMTP
+        53,    # DNS
+        110,   # POP3
+        143,   # IMAP
+        389,   # LDAP
+        445,   # SMB
+        3389,  # RDP
+        5900,  # VNC
+        111,   # RPC / NFS portmapper
+        2049,  # NFS
+    ])
+    # Fallback: used only when ports list is empty
     top_ports: int = 1000
     timeout: int = 300
 
@@ -177,6 +258,9 @@ class ExposureConfig(BaseModel):
         "git", "env", "api_docs", "graphql",
         "spring_actuator", "debug", "backup", "admin"
     ])
+    # Use the LLM to generate additional targeted paths based on tech stack
+    # and JS-extracted routes (runs after JS scanning phase)
+    ai_path_generation: bool = True
 
 
 class VulnToolsConfig(BaseModel):
@@ -232,6 +316,7 @@ class AppConfig(BaseModel):
     # Injected from environment – not from YAML
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    db_dsn: str = ""
 
     @model_validator(mode="after")
     def inject_api_keys(self) -> "AppConfig":
@@ -239,6 +324,8 @@ class AppConfig(BaseModel):
             self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not self.openai_api_key:
             self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not self.db_dsn:
+            self.db_dsn = os.environ.get("DATABASE_URL", "")
         return self
 
 

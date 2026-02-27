@@ -86,6 +86,22 @@ except ImportError as _e:
     logger_bootstrap.warning("HeaderInjectionScanner unavailable: %s", _e)
     _HEADER_AVAILABLE = False
 
+try:
+    from bugbounty.tools.ai_path_generator import AIPathGenerator
+    _AI_PATH_GEN_AVAILABLE = True
+except ImportError as _e:
+    logger_bootstrap = logging.getLogger(__name__)
+    logger_bootstrap.warning("AIPathGenerator unavailable: %s", _e)
+    _AI_PATH_GEN_AVAILABLE = False
+
+try:
+    from bugbounty.tools.port_service_checker import PortServiceChecker, ServiceFinding
+    _PORT_SERVICE_AVAILABLE = True
+except ImportError as _e:
+    logger_bootstrap = logging.getLogger(__name__)
+    logger_bootstrap.warning("PortServiceChecker unavailable: %s", _e)
+    _PORT_SERVICE_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # Nuclei tags to focus on (XSS and SSRF only)
@@ -104,6 +120,8 @@ class ScanResult(BaseModel):
     redirect_findings: int = 0
     takeover_findings: int = 0
     exposure_findings: int = 0
+    ai_exposure_findings: int = 0
+    service_findings: int = 0
     js_secrets: int = 0
     header_ssrf_findings: int = 0
 
@@ -226,6 +244,22 @@ class ScanPipeline:
             else None
         )
 
+        self._ai_path_gen: Optional[AIPathGenerator] = (
+            AIPathGenerator(
+                ai_config=config.ai,
+                anthropic_api_key=config.anthropic_api_key,
+                openai_api_key=config.openai_api_key,
+            )
+            if _AI_PATH_GEN_AVAILABLE and exposure_cfg.ai_path_generation
+            else None
+        )
+
+        self._port_service_checker: Optional[PortServiceChecker] = (
+            PortServiceChecker(scope_validator=scope)
+            if _PORT_SERVICE_AVAILABLE
+            else None
+        )
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -267,6 +301,28 @@ class ScanPipeline:
         all_urls = list(dict.fromkeys(all_urls))  # deduplicate preserving order
 
         all_findings: list[dict] = []
+
+        # ---------------------------------------------------------------
+        # Pre-scan: Extend target surface from open ports
+        # Load open ports discovered during recon and inject HTTP/HTTPS
+        # target URLs for non-standard ports into target_urls / all_urls
+        # so that every subsequent scanner covers them automatically.
+        # ---------------------------------------------------------------
+        open_ports = await self.store.get_open_ports(scan_run_id)
+        if open_ports and self._port_service_checker:
+            port_derived_urls = self._port_service_checker.build_http_targets(open_ports)
+            added = 0
+            for url in port_derived_urls:
+                if url not in target_urls:
+                    target_urls.append(url)
+                    added += 1
+                if url not in all_urls:
+                    all_urls.append(url)
+            if added:
+                logger.info(
+                    "[scan] Added %d HTTP target URLs from %d open ports",
+                    added, len(open_ports),
+                )
 
         # ---------------------------------------------------------------
         # Phase 0: Nuclei (XSS + SSRF templates)
@@ -332,6 +388,24 @@ class ScanPipeline:
                 logger.warning("[scan] Exposure scanner error: %s", exc)
 
         # ---------------------------------------------------------------
+        # Phase 2.5: Service-specific port exposure checks
+        # For each open port that maps to a known service (Elasticsearch,
+        # Prometheus, Kubelet, Docker daemon, etc.) send a targeted probe
+        # and report unauthenticated access as a finding.
+        # ---------------------------------------------------------------
+        await notify("service_check_start")
+        if self._port_service_checker and open_ports:
+            try:
+                svc_findings = await self._port_service_checker.check_services(open_ports)
+                for sf in svc_findings:
+                    all_findings.append(self._service_to_finding_dict(sf))
+                result.service_findings = len(svc_findings)
+                await notify("service_check_done", len(svc_findings))
+                logger.info("[scan] Service checks: %d findings", len(svc_findings))
+            except Exception as exc:
+                logger.warning("[scan] Service check error: %s", exc)
+
+        # ---------------------------------------------------------------
         # Phase 3: CORS misconfiguration scan
         # ---------------------------------------------------------------
         await notify("cors_start")
@@ -381,6 +455,56 @@ class ScanPipeline:
                     candidate_url = f"{parsed.scheme}://{parsed.netloc}{ep_path}"
                     if candidate_url not in all_urls and self.scope.is_in_scope(candidate_url):
                         all_urls.append(candidate_url)
+
+        # ---------------------------------------------------------------
+        # Phase 4.5: AI path generation
+        # Reason about the target's tech stack, URL patterns, and JS routes
+        # to produce a targeted list of paths beyond the static defaults.
+        # ---------------------------------------------------------------
+        ai_generated_paths: list[str] = []
+        await notify("ai_paths_start")
+        if self._ai_path_gen and target_urls:
+            try:
+                live_hosts_for_ai = await self.store.get_live_hosts(scan_run_id)
+                ai_generated_paths = await self._ai_path_gen.generate_paths(
+                    live_hosts=live_hosts_for_ai,
+                    js_extracted_paths=js_discovered_endpoints,
+                    crawled_urls=all_urls,
+                )
+                await notify("ai_paths_done", len(ai_generated_paths))
+                logger.info(
+                    "[scan] AI path generator: %d new paths to probe",
+                    len(ai_generated_paths),
+                )
+            except Exception as exc:
+                logger.warning("[scan] AI path generation error: %s", exc)
+
+        # ---------------------------------------------------------------
+        # Phase 4.6: Targeted exposure re-scan with AI-generated paths
+        # Run the exposure scanner a second time, passing the AI paths so
+        # they are probed against every live host.
+        # ---------------------------------------------------------------
+        await notify("ai_exposure_start")
+        if self._exposure and ai_generated_paths and target_urls:
+            try:
+                ai_exposure_findings = await self._exposure.scan_hosts(
+                    target_urls,
+                    extra_paths=ai_generated_paths,
+                )
+                # Only keep the ai_generated category from this pass to avoid
+                # double-counting findings already reported in Phase 2.
+                new_ai_findings = [
+                    f for f in ai_exposure_findings if f.category == "ai_generated"
+                ]
+                for ef in new_ai_findings:
+                    all_findings.append(self._exposure_to_finding_dict(ef))
+                result.ai_exposure_findings = len(new_ai_findings)
+                await notify("ai_exposure_done", len(new_ai_findings))
+                logger.info(
+                    "[scan] AI-targeted exposure: %d findings", len(new_ai_findings)
+                )
+            except Exception as exc:
+                logger.warning("[scan] AI-targeted exposure scan error: %s", exc)
 
         # ---------------------------------------------------------------
         # Phase 5: Parameter discovery
@@ -664,6 +788,33 @@ class ScanPipeline:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _service_to_finding_dict(sf) -> dict:
+        severity_to_cvss = {
+            "critical": 9.8,
+            "high": 8.5,
+            "medium": 5.3,
+            "low": 3.1,
+        }
+        return {
+            "template_id": f"service-exposure-{sf.service.lower().replace(' ', '-')}",
+            "name": f"Unauthenticated {sf.service} Access",
+            "severity": sf.severity,
+            "host": sf.host,
+            "matched_at": sf.url,
+            "description": (
+                f"{sf.service} on port {sf.port} is accessible without authentication "
+                f"(HTTP {sf.status_code}). {sf.description}"
+            ),
+            "tags": ["service-exposure", "misconfiguration", "CWE-306",
+                     sf.service.lower().split()[0]],
+            "cvss_score": severity_to_cvss.get(sf.severity, 5.3),
+            "cve_id": None,
+            "raw": sf.to_dict(),
+            "source": "port-service-checker",
+            "confidence": sf.confidence,
+        }
+
+    @staticmethod
     def _ssrf_to_finding_dict(sf) -> dict:
         severity_map = {
             "confirmed": "high",
@@ -809,6 +960,7 @@ class ScanPipeline:
             "debug": "Debug Endpoint Exposed",
             "backup": "Exposed Backup File",
             "admin": "Exposed Admin Panel",
+            "ai_generated": "Exposed Sensitive Path (AI-Identified)",
         }
         name = category_names.get(ef.category, f"Exposed Sensitive Path ({ef.category})")
         cvss = cvss_map.get(ef.category, 5.3)
@@ -823,6 +975,7 @@ class ScanPipeline:
             "debug": "CWE-215",
             "backup": "CWE-312",
             "admin": "CWE-200",
+            "ai_generated": "CWE-200",
         }
         cwe = cwe_map.get(ef.category, "CWE-200")
         return {
