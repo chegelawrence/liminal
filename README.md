@@ -482,7 +482,7 @@ flowchart TD
         CTX --> CONTEXTS["HTML body · HTML attribute\nJS string · HTML comment · URL value"]
         CONTEXTS --> PAYLOAD["3 · Send context-aware payload"]
         PAYLOAD --> HTML_P["html_body:\n<script>alert(1)</script>\n<img src=x onerror=alert(1)>"]
-        PAYLOAD --> ATTR_P["html_attribute:\n\" onmouseover=\"alert(1)\" x=\""]
+        PAYLOAD --> ATTR_P["html_attribute:\n' onmouseover='alert(1)' x='"]
         PAYLOAD --> JS_P["js_string:\n';alert(1)//"]
         HTML_P & ATTR_P & JS_P --> UNESC["4 · Confirm payload is\nunescaped in response\n(raw marker must appear literally)"]
         UNESC --> VERIFY_R["5 · Re-test to confirm\nreproducibility"]
