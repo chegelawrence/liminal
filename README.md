@@ -131,44 +131,44 @@ bugbounty scan --config my-target.yaml
 
 ```mermaid
 flowchart TD
-    CLI["CLI\nbugbounty scan"] --> ORCH
+    CLI["CLI bugbounty scan"] --> ORCH
 
     subgraph ORCH["Orchestrator"]
         direction TB
-        PL["Planner Agent\n(recon strategy)"]
+        PL["Planner Agent (recon strategy)"]
         RP["Recon Pipeline"]
-        SP["Scan Pipeline\n(14 phases)"]
-        AN["Analyzer Agent\n(triage + FP removal)"]
-        RR["Reporter Agent\n(CWE · CVSS · curl PoC)"]
+        SP["Scan Pipeline (14 phases)"]
+        AN["Analyzer Agent (triage + FP removal)"]
+        RR["Reporter Agent (CWE · CVSS · curl PoC)"]
         PL --> RP --> SP --> AN --> RR
     end
 
     subgraph RECON["Recon Pipeline"]
         direction LR
-        SF["subfinder\namass"] --> DNS["dnsx\n(resolve)"]
-        DNS --> HX["httpx\n(probe)"]
-        HX --> NB["naabu\n(104 ports)"]
-        HX --> GA["gau + waybackurls\n(URLs)"]
-        GA --> KT["katana\n(crawl)"]
+        SF["subfinder amass"] --> DNS["dnsx (resolve)"]
+        DNS --> HX["httpx (probe)"]
+        HX --> NB["naabu (104 ports)"]
+        HX --> GA["gau + waybackurls (URLs)"]
+        GA --> KT["katana (crawl)"]
     end
 
     subgraph SCAN["Scan Pipeline — 14 phases"]
         direction TB
-        PRE["pre · port URL injection\n(extend target surface)"]
-        NC["1 · nuclei\n(template scan)"]
-        TK["2 · takeover\n(CNAME + fingerprint)"]
-        EX["3 · exposure\n(static paths)"]
-        SVC["4 · service checks\n(22 services on open ports)"]
-        CO["5 · CORS\n(5 bypass techniques)"]
-        JS["6 · JS scanning\n(secrets + endpoints)"]
-        AI_P["7 · AI path gen\n(LLM-reasoned paths)"]
-        AI_E["8 · AI exposure\n(probe AI paths)"]
-        PD["9 · param discovery\narjun"]
-        S1["10 · SSRF GET\n(OOB + error-based)"]
-        S2["11 · SSRF POST\n(JSON + form body)"]
-        S3["12 · SSRF headers\n(14 injection headers)"]
-        RD["13 · open redirect\n(52 param names)"]
-        XS["14 · XSS\nreflection + dalfox"]
+        PRE["pre · port URL injection (extend target surface)"]
+        NC["1 · nuclei (template scan)"]
+        TK["2 · takeover (CNAME + fingerprint)"]
+        EX["3 · exposure (static paths)"]
+        SVC["4 · service checks (22 services on open ports)"]
+        CO["5 · CORS (5 bypass techniques)"]
+        JS["6 · JS scanning (secrets + endpoints)"]
+        AI_P["7 · AI path gen (LLM-reasoned paths)"]
+        AI_E["8 · AI exposure (probe AI paths)"]
+        PD["9 · param discovery arjun"]
+        S1["10 · SSRF GET (OOB + error-based)"]
+        S2["11 · SSRF POST (JSON + form body)"]
+        S3["12 · SSRF headers (14 injection headers)"]
+        RD["13 · open redirect (52 param names)"]
+        XS["14 · XSS reflection + dalfox"]
     end
 
     subgraph AI["AI Layer (Claude or OpenAI)"]
@@ -239,33 +239,33 @@ The scan pipeline runs in a fixed order. Open port results are processed first t
 ```mermaid
 flowchart LR
     subgraph PRE["Pre-scan"]
-        P0["port URL injection\n(extend target_urls)"]
+        P0["port URL injection (extend target_urls)"]
     end
 
     subgraph FAST["Discovery"]
-        P1["1 · nuclei\ntemplates"]
-        P2["2 · subdomain\ntakeover"]
-        P3["3 · static\nexposure"]
-        P4["4 · service\nchecks"]
-        P5["5 · CORS\nmisconfig"]
-        P6["6 · JS\nscanning"]
-        P7["7 · AI path\ngeneration"]
-        P8["8 · AI\nexposure"]
+        P1["1 · nuclei templates"]
+        P2["2 · subdomain takeover"]
+        P3["3 · static exposure"]
+        P4["4 · service checks"]
+        P5["5 · CORS misconfig"]
+        P6["6 · JS scanning"]
+        P7["7 · AI path generation"]
+        P8["8 · AI exposure"]
     end
 
     subgraph PARAM["Parameter Prep"]
-        P9["9 · param\ndiscovery"]
+        P9["9 · param discovery"]
     end
 
     subgraph SSRF_BLOCK["SSRF (three vectors)"]
-        P10["10 · SSRF GET\nURL params"]
-        P11["11 · SSRF POST\nJSON / form body"]
-        P12["12 · SSRF headers\n14 injection headers"]
+        P10["10 · SSRF GET URL params"]
+        P11["11 · SSRF POST JSON / form body"]
+        P12["12 · SSRF headers 14 injection headers"]
     end
 
     subgraph INJECT["Injection"]
-        P13["13 · open\nredirect"]
-        P14["14 · XSS\nreflection + dalfox"]
+        P13["13 · open redirect"]
+        P14["14 · XSS reflection + dalfox"]
     end
 
     PRE --> FAST --> PARAM --> SSRF_BLOCK --> INJECT
@@ -365,24 +365,24 @@ flowchart TD
 
     subgraph CONTEXT["Context inputs"]
         direction LR
-        TECH["Tech stack\ndetected per host\n(React, Spring Boot, nginx ...)"]
-        JSROUTES["JS-extracted paths\n(top 60 by relevance score)"]
-        URLPAT["URL patterns\n(normalised structure:\n/api/v2/{id}/, /internal/ ...)"]
-        CONV["Naming conventions\n(snake_case / kebab-case / camelCase)"]
+        TECH["Tech stack detected per host (React, Spring Boot, nginx ...)"]
+        JSROUTES["JS-extracted paths (top 60 by relevance score)"]
+        URLPAT["URL patterns (normalised structure: /api/v2/{id}/, /internal/ ...)"]
+        CONV["Naming conventions (snake_case / kebab-case / camelCase)"]
     end
 
-    LLM["LLM reasoning\n(via submit_paths tool call)"] --> PATHS
+    LLM["LLM reasoning (via submit_paths tool call)"] --> PATHS
 
     subgraph PATHS["Generated paths"]
         direction TB
-        TECH_P["Framework-specific paths\n(Django admin, Spring Actuator ...)"]
-        INFRA_P["Internal tool paths\n(/prometheus/, /grafana/, /consul/ ...)"]
-        CONV_P["Naming-convention paths\n(matches app style)"]
-        VAR_P["API version variants\n(/api/v2/admin/, /api/internal/ ...)"]
+        TECH_P["Framework-specific paths (Django admin, Spring Actuator ...)"]
+        INFRA_P["Internal tool paths (/prometheus/, /grafana/, /consul/ ...)"]
+        CONV_P["Naming-convention paths (matches app style)"]
+        VAR_P["API version variants (/api/v2/admin/, /api/internal/ ...)"]
     end
 
-    PATHS --> VALIDATE["Path validation\n(must start with /, no traversal,\nURL-safe chars, not already known)"]
-    VALIDATE --> PROBE["Probe against every live host\n(any 2xx or 403 → finding)"]
+    PATHS --> VALIDATE["Path validation (must start with /, no traversal, URL-safe chars, not already known)"]
+    VALIDATE --> PROBE["Probe against every live host (any 2xx or 403 → finding)"]
     PROBE --> DB[("Save to DB")]
 ```
 
@@ -404,28 +404,28 @@ SSRF is tested across three distinct injection vectors. All three share the same
 
 ```mermaid
 flowchart TD
-    START["All discovered URLs\n+ parameterised endpoints\n+ port-derived URLs"] --> VECTOR
+    START["All discovered URLs + parameterised endpoints + port-derived URLs"] --> VECTOR
 
-    VECTOR{"Injection\nvector"}
+    VECTOR{"Injection vector"}
 
-    VECTOR -->|"GET params\n(url=, redirect=, dest= ...)"| GET_SC
-    VECTOR -->|"POST JSON/form body\n(imageUrl, webhookUrl ...)"| POST_SC
-    VECTOR -->|"HTTP headers\n(X-Forwarded-For, X-Host ...)"| HDR_SC
+    VECTOR -->|"GET params (url=, redirect=, dest= ...)"| GET_SC
+    VECTOR -->|"POST JSON/form body (imageUrl, webhookUrl ...)"| POST_SC
+    VECTOR -->|"HTTP headers (X-Forwarded-For, X-Host ...)"| HDR_SC
 
     subgraph OOB_FLOW["OOB Confirmation (all vectors)"]
         direction TB
-        INJECT["Inject: http://tag.oast.pro\ninto candidate"]
-        WAIT["Wait 15s for\nDNS/HTTP callback"]
-        GOT{{"Callback\nreceived?"}}
+        INJECT["Inject: http://tag.oast.pro into candidate"]
+        WAIT["Wait 15s for DNS/HTTP callback"]
+        GOT{{"Callback received?"}}
         INJECT --> WAIT --> GOT
     end
 
     GET_SC & POST_SC & HDR_SC --> OOB_FLOW
 
-    GOT -->|"Yes ✓"| CONFIRM["CONFIRMED\nconfidence: confirmed\nseverity: high  CVSS: 8.6"]
-    GOT -->|"No"| ERR_BASED["Error-Based Fallback\nInject: 169.254.169.254 / cloud IMDS\nAnalyse response body"]
-    ERR_BASED --> REPRO["Re-verify —\nrepeat injection,\nconfirm reproducible"]
-    REPRO -->|"Yes"| MEDIUM["FINDING\nconfidence: medium\nNeeds manual verification"]
+    GOT -->|"Yes ✓"| CONFIRM["CONFIRMED confidence: confirmed severity: high  CVSS: 8.6"]
+    GOT -->|"No"| ERR_BASED["Error-Based Fallback Inject: 169.254.169.254 / cloud IMDS Analyse response body"]
+    ERR_BASED --> REPRO["Re-verify — repeat injection, confirm reproducible"]
+    REPRO -->|"Yes"| MEDIUM["FINDING confidence: medium Needs manual verification"]
     REPRO -->|"No"| SKIP["Skip"]
 
     CONFIRM --> DB[("Save to DB")]
@@ -468,39 +468,39 @@ XSS scanning uses two parallel approaches, both designed to minimise false posit
 
 ```mermaid
 flowchart TD
-    URLS["URLs with query\nparameters"] --> SPLIT
+    URLS["URLs with query parameters"] --> SPLIT
 
-    SPLIT --> REFL["Reflection Scanner\n(custom)"]
-    SPLIT --> DALF["Dalfox\n(automated)"]
+    SPLIT --> REFL["Reflection Scanner (custom)"]
+    SPLIT --> DALF["Dalfox (automated)"]
 
     subgraph REFLECTION["Reflection Scanner"]
         direction TB
-        PROBE["1 · Send unique probe\n?param=xss3f9a2b\nCheck if probe appears in response"]
-        PROBE --> FOUND_R{{"Probe in\nresponse?"}}
+        PROBE["1 · Send unique probe ?param=xss3f9a2b Check if probe appears in response"]
+        PROBE --> FOUND_R{{"Probe in response?"}}
         FOUND_R -->|No| SKIP_R["Skip param"]
-        FOUND_R -->|Yes| CTX["2 · Detect context\nwhere reflection appears"]
-        CTX --> CONTEXTS["HTML body · HTML attribute\nJS string · HTML comment · URL value"]
+        FOUND_R -->|Yes| CTX["2 · Detect context where reflection appears"]
+        CTX --> CONTEXTS["HTML body · HTML attribute JS string · HTML comment · URL value"]
         CONTEXTS --> PAYLOAD["3 · Send context-aware payload"]
-        PAYLOAD --> HTML_P["html_body:\n<script>alert(1)</script>\n<img src=x onerror=alert(1)>"]
-        PAYLOAD --> ATTR_P["html_attribute:\n' onmouseover='alert(1)' x='"]
-        PAYLOAD --> JS_P["js_string:\n';alert(1)//"]
-        HTML_P & ATTR_P & JS_P --> UNESC["4 · Confirm payload is\nunescaped in response\n(raw marker must appear literally)"]
-        UNESC --> VERIFY_R["5 · Re-test to confirm\nreproducibility"]
+        PAYLOAD --> HTML_P["html_body: <script>alert(1)</script> <img src=x onerror=alert(1)>"]
+        PAYLOAD --> ATTR_P["html_attribute: ' onmouseover='alert(1)' x='"]
+        PAYLOAD --> JS_P["js_string: ';alert(1)//"]
+        HTML_P & ATTR_P & JS_P --> UNESC["4 · Confirm payload is unescaped in response (raw marker must appear literally)"]
+        UNESC --> VERIFY_R["5 · Re-test to confirm reproducibility"]
     end
 
     subgraph DALFOX_FLOW["Dalfox"]
         direction TB
-        D1["Feeds up to 200\nparameterised URLs"]
-        D1 --> D2["dalfox file URLs.txt\n--format json --delay 100ms"]
-        D2 --> D3["dalfox internally verifies\nexecution context before reporting"]
-        D3 --> D4["JSON output parsed\nand scope-validated"]
+        D1["Feeds up to 200 parameterised URLs"]
+        D1 --> D2["dalfox file URLs.txt --format json --delay 100ms"]
+        D2 --> D3["dalfox internally verifies execution context before reporting"]
+        D3 --> D4["JSON output parsed and scope-validated"]
     end
 
     REFL --> REFLECTION
     DALF --> DALFOX_FLOW
     REFLECTION --> MERGE["Merge + deduplicate"]
     DALFOX_FLOW --> MERGE
-    MERGE --> AI_XSS["AI Analyzer\nfinal triage pass"]
+    MERGE --> AI_XSS["AI Analyzer final triage pass"]
 ```
 
 ---
@@ -515,18 +515,18 @@ flowchart TD
 
     subgraph FIVE["5 bypass techniques"]
         direction LR
-        T1["Reflected origin\nOrigin: https://evil.com\nExpect: ACA-Origin = evil.com"]
-        T2["Null origin\nOrigin: null\nExpect: ACA-Origin = null"]
-        T3["Prefix bypass\nOrigin: https://evil.example.com\n(trusted prefix spoofed)"]
-        T4["Suffix bypass\nOrigin: https://evilexample.com\n(suffix match abuse)"]
-        T5["Wildcard\nOrigin: https://anything.com\nExpect: ACA-Origin = *"]
+        T1["Reflected origin Origin: https://evil.com Expect: ACA-Origin = evil.com"]
+        T2["Null origin Origin: null Expect: ACA-Origin = null"]
+        T3["Prefix bypass Origin: https://evil.example.com (trusted prefix spoofed)"]
+        T4["Suffix bypass Origin: https://evilexample.com (suffix match abuse)"]
+        T5["Wildcard Origin: https://anything.com Expect: ACA-Origin = *"]
     end
 
-    FIVE --> CRED{{"ACA-Credentials:\ntrue?"}}
-    CRED -->|Yes| HIGH["High / Critical\nCross-origin credential leak"]
-    CRED -->|No| MED["Medium / Low\nOrigin reflection without credentials"]
+    FIVE --> CRED{{"ACA-Credentials: true?"}}
+    CRED -->|Yes| HIGH["High / Critical Cross-origin credential leak"]
+    CRED -->|No| MED["Medium / Low Origin reflection without credentials"]
 
-    HIGH --> REVERIFY["Re-verify critical/high\nbefore saving"]
+    HIGH --> REVERIFY["Re-verify critical/high before saving"]
     REVERIFY --> DB[("Save to DB")]
     MED --> DB
 ```
@@ -548,18 +548,18 @@ The takeover scanner resolves the full CNAME chain for each subdomain and checks
 
 ```mermaid
 flowchart TD
-    SUBS["All enumerated\nsubdomains"] --> DNS_RES
+    SUBS["All enumerated subdomains"] --> DNS_RES
 
-    DNS_RES["DNS CNAME resolution\n(dnspython)"]
-    DNS_RES --> HAS_CNAME{{"CNAME\nchain?"}}
+    DNS_RES["DNS CNAME resolution (dnspython)"]
+    DNS_RES --> HAS_CNAME{{"CNAME chain?"}}
     HAS_CNAME -->|No| SKIP["Skip — A record only"]
-    HAS_CNAME -->|Yes| CHAIN["Full chain resolved:\nsub.example.com\n→ service.s3-website-us-east-1.amazonaws.com\n→ ..."]
+    HAS_CNAME -->|Yes| CHAIN["Full chain resolved: sub.example.com → service.s3-website-us-east-1.amazonaws.com → ..."]
 
-    CHAIN --> HTTP["Fetch HTTP body\nof CNAME target"]
-    HTTP --> MATCH{{"Fingerprint\nmatch?"}}
+    CHAIN --> HTTP["Fetch HTTP body of CNAME target"]
+    HTTP --> MATCH{{"Fingerprint match?"}}
 
     MATCH -->|No| CLEAN["No takeover indicator"]
-    MATCH -->|Yes| FINDING["Takeover finding\nseverity: critical\ncwe: CWE-284"]
+    MATCH -->|Yes| FINDING["Takeover finding severity: critical cwe: CWE-284"]
     FINDING --> DB[("Save to DB")]
 ```
 
@@ -580,22 +580,22 @@ The redirect scanner tests 52 parameter names, follows the actual redirect chain
 
 ```mermaid
 flowchart TD
-    URLS["URLs with redirect-like\nparameter names"] --> INJECT
+    URLS["URLs with redirect-like parameter names"] --> INJECT
 
     subgraph PARAMS["52 tested parameters"]
         direction LR
-        P1["redirect · return · next\ncontinue · url · goto"]
-        P2["dest · destination · target\nreturnTo · returnUrl · back"]
-        P3["forward · location · path\nreturnPath · redirectUri · to"]
+        P1["redirect · return · next continue · url · goto"]
+        P2["dest · destination · target returnTo · returnUrl · back"]
+        P3["forward · location · path returnPath · redirectUri · to"]
     end
 
-    INJECT["Inject external domain\n?redirect=https://evil.com/\n(with / without slash variations)"]
-    INJECT --> FOLLOW["Follow redirect chain\n(httpx aiohttp, max 5 hops)"]
-    FOLLOW --> LAND{{"Final host\n= injected host?"}}
+    INJECT["Inject external domain ?redirect=https://evil.com/ (with / without slash variations)"]
+    INJECT --> FOLLOW["Follow redirect chain (httpx aiohttp, max 5 hops)"]
+    FOLLOW --> LAND{{"Final host = injected host?"}}
 
-    LAND -->|Yes| HOST_CHECK["Strict host comparison\n(no partial matches)"]
-    HOST_CHECK --> CHAIN_CHECK{{"OAuth / token\ncontext?"}}
-    CHAIN_CHECK -->|"redirect_uri\nresponse_type\nclient_id"| CHAIN_WARN["Chaining potential: HIGH\nOAuth token theft\nseverity → high"]
+    LAND -->|Yes| HOST_CHECK["Strict host comparison (no partial matches)"]
+    HOST_CHECK --> CHAIN_CHECK{{"OAuth / token context?"}}
+    CHAIN_CHECK -->|"redirect_uri response_type client_id"| CHAIN_WARN["Chaining potential: HIGH OAuth token theft severity → high"]
     CHAIN_CHECK -->|No| PLAIN["severity: medium"]
 
     CHAIN_WARN & PLAIN --> VERIFY["Re-verify before saving"]
@@ -612,17 +612,17 @@ Every `.js` file discovered during recon is fetched and scanned for hardcoded se
 
 ```mermaid
 flowchart LR
-    JS_URLS["All .js URLs from\nrecon + crawl"] --> FETCH
+    JS_URLS["All .js URLs from recon + crawl"] --> FETCH
 
-    FETCH["Fetch JS content\n(scope-validated)"] --> SECRETS
+    FETCH["Fetch JS content (scope-validated)"] --> SECRETS
 
     subgraph SECRETS["16 secret patterns"]
         direction TB
-        S1["AWS access key · secret key\nAWS session token"]
-        S2["Google API key\nService account JSON"]
-        S3["GitHub token · GitLab token\nSlack webhook · Discord token"]
-        S4["Stripe key · Twilio SID\nSendGrid API key"]
-        S5["Private RSA/EC key\nGeneric API key · Bearer token"]
+        S1["AWS access key · secret key AWS session token"]
+        S2["Google API key Service account JSON"]
+        S3["GitHub token · GitLab token Slack webhook · Discord token"]
+        S4["Stripe key · Twilio SID SendGrid API key"]
+        S5["Private RSA/EC key Generic API key · Bearer token"]
     end
 
     FETCH --> ENDPOINTS
@@ -631,12 +631,12 @@ flowchart LR
         direction TB
         E1["Relative paths: /api/v1/users"]
         E2["Absolute URLs: https://..."]
-        E3["Fetch/XHR calls\naxios.get('/endpoint')"]
+        E3["Fetch/XHR calls axios.get('/endpoint')"]
         E4["GraphQL endpoint hints"]
     end
 
-    SECRETS --> FINDINGS["JS findings\n(secret truncated:\nfirst8chars...)"]
-    ENDPOINTS --> NEW_URLS["New URLs + context\nfed into AI path generator\nand SSRF + XSS phases"]
+    SECRETS --> FINDINGS["JS findings (secret truncated: first8chars...)"]
+    ENDPOINTS --> NEW_URLS["New URLs + context fed into AI path generator and SSRF + XSS phases"]
 
     FINDINGS --> DB[("Save to DB")]
 ```
@@ -1038,13 +1038,13 @@ This is a first-class concern. Every layer of the pipeline applies FP reduction.
 
 ```mermaid
 flowchart LR
-    RAW["Raw findings\n(10 scanner types)"]
+    RAW["Raw findings (10 scanner types)"]
 
-    RAW --> L1["Layer 1\nScope validation\nEvery result checked\nbefore it's saved"]
-    L1 --> L2["Layer 2\nIn-tool FP filtering\nSSRF: OOB-only or re-verified\nXSS: unescaped context check\nCORS: credentials present\nTakeover: body fingerprint\nExposure: content validation\nService: response body validator\nRedirect: actual Location header"]
-    L2 --> L3["Layer 3\nRe-verification pass\nEach finding re-tested\nbefore writing to DB"]
-    L3 --> L4["Layer 4\nAI triage\nFP likelihood scored\nper vulnerability class"]
-    L4 --> OUT["Confirmed findings\nready for submission"]
+    RAW --> L1["Layer 1 Scope validation Every result checked before it's saved"]
+    L1 --> L2["Layer 2 In-tool FP filtering SSRF: OOB-only or re-verified XSS: unescaped context check CORS: credentials present Takeover: body fingerprint Exposure: content validation Service: response body validator Redirect: actual Location header"]
+    L2 --> L3["Layer 3 Re-verification pass Each finding re-tested before writing to DB"]
+    L3 --> L4["Layer 4 AI triage FP likelihood scored per vulnerability class"]
+    L4 --> OUT["Confirmed findings ready for submission"]
 ```
 
 **Confidence scoring by signal type:**
