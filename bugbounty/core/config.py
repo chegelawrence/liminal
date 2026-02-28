@@ -280,6 +280,18 @@ class ExposureConfig(BaseModel):
     ai_path_generation: bool = True
 
 
+class AnomalyConfig(BaseModel):
+    """Configuration for the adaptive anomaly-based vulnerability detector."""
+
+    enabled: bool = True
+    concurrent: int = 5
+    timeout: float = 10.0
+    score_threshold: int = 5
+    max_hosts: int = 50          # cost control — cap hosts probed per scan
+    min_severity: str = "medium" # never auto-create low/info novel findings
+    replay_patterns: bool = True # proactively test confirmed patterns from DB
+
+
 class VulnToolsConfig(BaseModel):
     """Vulnerability-specific tool configuration."""
     ssrf: SSRFConfig = Field(default_factory=SSRFConfig)
@@ -291,6 +303,7 @@ class VulnToolsConfig(BaseModel):
     header_injection: HeaderInjectionConfig = Field(default_factory=HeaderInjectionConfig)
     js_scanner: JSScannerConfig = Field(default_factory=JSScannerConfig)
     exposure: ExposureConfig = Field(default_factory=ExposureConfig)
+    anomaly: AnomalyConfig = Field(default_factory=AnomalyConfig)
     post_ssrf: bool = True  # Enable POST body SSRF testing
 
 

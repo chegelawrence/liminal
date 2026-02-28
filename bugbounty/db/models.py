@@ -95,6 +95,22 @@ class Finding(BaseModel):
     formatted_description: Optional[str] = None
 
 
+class AnomalyPattern(BaseModel):
+    """A confirmed anomaly detection pattern saved for cross-scan learning."""
+
+    id: str
+    created_at: datetime
+    tech_stack: list[str] = Field(default_factory=list)
+    probe_type: str
+    vulnerability_class: str
+    severity: str
+    confirmation_method: dict = Field(default_factory=dict)
+    response_signature: str
+    confirmed_count: int = 1
+    fp_count: int = 0
+    last_seen: datetime
+
+
 class AnalysisResult(BaseModel):
     """Structured output from the AnalyzerAgent."""
 

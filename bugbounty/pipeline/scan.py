@@ -18,11 +18,12 @@ Phases:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from pydantic import BaseModel
 
@@ -30,7 +31,7 @@ from bugbounty.core.config import AppConfig
 from bugbounty.core.interactsh import InteractshClient
 from bugbounty.core.rate_limiter import RateLimiter
 from bugbounty.core.scope import ScopeValidator
-from bugbounty.db.models import Finding
+from bugbounty.db.models import AnomalyPattern, Finding
 from bugbounty.db.store import DataStore
 from bugbounty.tools.params import ArjunTool, ParamExtractor
 from bugbounty.tools.scanner import NucleiTool
@@ -102,11 +103,34 @@ except ImportError as _e:
     logger_bootstrap.warning("PortServiceChecker unavailable: %s", _e)
     _PORT_SERVICE_AVAILABLE = False
 
+try:
+    from bugbounty.tools.anomaly import AnomalyProber, AnomalyResult
+    from bugbounty.agents.anomaly_analyzer import (
+        AnomalyAnalysisAgent,
+        AnomalyHypothesis,
+        ConfirmationProbe,
+        ConfirmationResult,
+    )
+    _ANOMALY_AVAILABLE = True
+except ImportError as _e:
+    logger_bootstrap = logging.getLogger(__name__)
+    logger_bootstrap.warning("AnomalyProber unavailable: %s", _e)
+    _ANOMALY_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # Nuclei tags to focus on (XSS and SSRF only)
 _NUCLEI_FOCUS_TAGS = ["xss", "ssrf"]
 _NUCLEI_EXCLUDE_TAGS = ["dos", "fuzz", "intrusive", "tech"]
+
+_SEVERITY_RANKS: dict[str, int] = {
+    "critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0,
+}
+
+
+def _severity_rank(s: str) -> int:
+    """Return a numeric rank for a severity string (higher = more severe)."""
+    return _SEVERITY_RANKS.get(s.lower(), 0)
 
 
 class ScanResult(BaseModel):
@@ -124,6 +148,7 @@ class ScanResult(BaseModel):
     service_findings: int = 0
     js_secrets: int = 0
     header_ssrf_findings: int = 0
+    novel_findings: int = 0
 
 
 class ScanPipeline:
@@ -257,6 +282,25 @@ class ScanPipeline:
         self._port_service_checker: Optional[PortServiceChecker] = (
             PortServiceChecker(scope_validator=scope)
             if _PORT_SERVICE_AVAILABLE
+            else None
+        )
+
+        anomaly_cfg = config.vuln.anomaly
+        self._anomaly_prober: Optional[AnomalyProber] = (
+            AnomalyProber(
+                scope,
+                rate_limiter,
+                concurrent=anomaly_cfg.concurrent,
+                timeout=anomaly_cfg.timeout,
+                score_threshold=anomaly_cfg.score_threshold,
+                max_hosts=anomaly_cfg.max_hosts,
+            )
+            if _ANOMALY_AVAILABLE and anomaly_cfg.enabled
+            else None
+        )
+        self._anomaly_agent: Optional[AnomalyAnalysisAgent] = (
+            AnomalyAnalysisAgent(config)
+            if _ANOMALY_AVAILABLE and anomaly_cfg.enabled
             else None
         )
 
@@ -689,6 +733,20 @@ class ScanPipeline:
             await notify("xss_done", len(xss_results))
 
         # ---------------------------------------------------------------
+        # Phase 12: Adaptive anomaly detection (novel vulnerability finder)
+        # ---------------------------------------------------------------
+        anomaly_cfg = self.config.vuln.anomaly
+        if self._anomaly_prober and self._anomaly_agent and target_urls:
+            await notify("anomaly_scan_start")
+            try:
+                result.novel_findings = await self._run_anomaly_phase(
+                    scan_run_id, target_urls, live_hosts, all_findings, anomaly_cfg
+                )
+                await notify("anomaly_scan_done", result.novel_findings)
+            except Exception as exc:
+                logger.warning("[scan] Anomaly phase error: %s", exc)
+
+        # ---------------------------------------------------------------
         # Phase 11: Persist all findings
         # ---------------------------------------------------------------
         severity_counts: dict[str, int] = {}
@@ -718,6 +776,209 @@ class ScanPipeline:
             "[scan] Saved %d findings: %s", result.findings_total, severity_counts
         )
         return result
+
+    # ------------------------------------------------------------------
+    # Anomaly phase
+    # ------------------------------------------------------------------
+
+    async def _run_anomaly_phase(
+        self,
+        scan_run_id: str,
+        target_urls: list[str],
+        live_hosts: list,
+        all_findings: list[dict],
+        cfg,
+    ) -> int:
+        """Execute Phase 12: pattern replay + fresh anomaly detection.
+
+        Mutates *all_findings* in-place and returns the count of novel
+        findings added.
+        """
+        novel_count = 0
+        tech_stack = list({t for h in live_hosts for t in (h.technologies or [])})
+
+        # ── Step A: replay confirmed patterns from previous scans ──────
+        if cfg.replay_patterns:
+            patterns = await self.store.get_patterns_by_tech(tech_stack)
+            logger.info(
+                "[anomaly] Replaying %d known patterns against %d targets",
+                len(patterns), min(len(target_urls), cfg.max_hosts),
+            )
+            for pattern in patterns:
+                for url in target_urls[: cfg.max_hosts]:
+                    try:
+                        replay_probe = ConfirmationProbe(**pattern.confirmation_method)
+                        # Adapt stored URL origin to the current target
+                        adapted_url = self._adapt_probe_url(replay_probe.url, url)
+                        adapted_probe = ConfirmationProbe(
+                            method=replay_probe.method,
+                            url=adapted_url,
+                            headers=replay_probe.headers,
+                            body=replay_probe.body,
+                            confirms_if=replay_probe.confirms_if,
+                            denies_if=replay_probe.denies_if,
+                        )
+                        probe_resp = await self._anomaly_prober._request(
+                            adapted_url,
+                            adapted_probe.method,
+                            adapted_probe.headers,
+                            {},
+                            adapted_probe.body,
+                            cfg.timeout,
+                        )
+                        replay_hypothesis = AnomalyHypothesis(
+                            vulnerability_class=pattern.vulnerability_class,
+                            reasoning="Pattern replay from previously confirmed finding",
+                            confidence="high",
+                            impact=f"Previously confirmed {pattern.vulnerability_class}",
+                        )
+                        confirmation = await self._anomaly_agent.evaluate_result(
+                            anomaly=None,
+                            hypothesis=replay_hypothesis,
+                            probe=adapted_probe,
+                            probe_response=probe_resp,
+                        )
+                        if confirmation.confirmed:
+                            all_findings.append(
+                                self._novel_to_finding_dict(url, confirmation, "pattern-replay")
+                            )
+                            novel_count += 1
+                            logger.info(
+                                "[anomaly] Pattern replay confirmed: %s on %s",
+                                pattern.vulnerability_class, url,
+                            )
+                        else:
+                            await self.store.increment_fp(pattern.id)
+                    except Exception as exc:
+                        logger.debug("[anomaly] Pattern replay error for %s: %s", url, exc)
+
+        # ── Step B: fresh anomaly detection ───────────────────────────
+        anomalies = await self._anomaly_prober.probe_hosts(target_urls)
+        logger.info(
+            "[anomaly] %d high-divergence anomalies — starting LLM analysis", len(anomalies)
+        )
+        for anomaly in anomalies:
+            try:
+                hypothesis = await self._anomaly_agent.analyze_anomaly(anomaly)
+                if not hypothesis or hypothesis.confidence == "low":
+                    continue
+
+                probe = await self._anomaly_agent.design_probe(anomaly, hypothesis)
+                if not probe:
+                    continue
+
+                probe_response = await self._anomaly_prober._request(
+                    probe.url,
+                    probe.method,
+                    probe.headers,
+                    {},
+                    probe.body,
+                    cfg.timeout,
+                )
+                confirmation = await self._anomaly_agent.evaluate_result(
+                    anomaly=anomaly,
+                    hypothesis=hypothesis,
+                    probe=probe,
+                    probe_response=probe_response,
+                )
+
+                if (
+                    confirmation.confirmed
+                    and _severity_rank(confirmation.severity)
+                    >= _severity_rank(cfg.min_severity)
+                ):
+                    all_findings.append(
+                        self._novel_to_finding_dict(
+                            anomaly.url, confirmation, "anomaly-detection"
+                        )
+                    )
+                    novel_count += 1
+                    logger.info(
+                        "[anomaly] Novel finding confirmed: %s (%s) on %s",
+                        confirmation.vulnerability_class,
+                        confirmation.severity,
+                        anomaly.url,
+                    )
+
+                    # Persist pattern for cross-scan learning
+                    try:
+                        await self.store.save_pattern(
+                            AnomalyPattern(
+                                id=str(uuid.uuid4()),
+                                created_at=datetime.now(timezone.utc),
+                                tech_stack=tech_stack[:10],
+                                probe_type=anomaly.probe.probe_type,
+                                vulnerability_class=confirmation.vulnerability_class,
+                                severity=confirmation.severity,
+                                confirmation_method=dataclasses.asdict(probe),
+                                response_signature=probe.confirms_if,
+                                confirmed_count=1,
+                                fp_count=0,
+                                last_seen=datetime.now(timezone.utc),
+                            )
+                        )
+                    except Exception as exc:
+                        logger.warning("[anomaly] Failed to save pattern: %s", exc)
+
+            except Exception as exc:
+                logger.debug(
+                    "[anomaly] Analysis error for %s probe on %s: %s",
+                    anomaly.probe.name, anomaly.url, exc,
+                )
+
+        logger.info(
+            "[anomaly] Phase complete: %d novel findings added", novel_count
+        )
+        return novel_count
+
+    @staticmethod
+    def _novel_to_finding_dict(
+        url: str, result: ConfirmationResult, source: str
+    ) -> dict:
+        """Convert a ConfirmationResult to the standard finding dict format."""
+        severity_cvss = {"critical": 9.0, "high": 7.5, "medium": 5.3}
+        return {
+            "template_id": f"ai-novel-{result.vulnerability_class}",
+            "name": (
+                f"AI-Detected: {result.vulnerability_class.replace('-', ' ').title()}"
+            ),
+            "severity": result.severity,
+            "host": url,
+            "matched_at": url,
+            "description": result.description,
+            "tags": [
+                "ai-detected",
+                "novel",
+                result.vulnerability_class,
+                source,
+            ],
+            "cvss_score": severity_cvss.get(result.severity, 5.3),
+            "cve_id": None,
+            "raw": {
+                "evidence": result.evidence,
+                "poc_request": result.poc_request,
+                "vulnerability_class": result.vulnerability_class,
+                "confidence": result.confidence,
+                "source": source,
+            },
+            "confidence": result.confidence,
+        }
+
+    @staticmethod
+    def _adapt_probe_url(original_probe_url: str, target_url: str) -> str:
+        """Replace the origin (scheme + host + port) of a stored probe URL
+        with the origin of the current scan target."""
+        try:
+            target_parsed = urlparse(target_url)
+            probe_parsed = urlparse(original_probe_url)
+            return urlunparse(
+                probe_parsed._replace(
+                    scheme=target_parsed.scheme,
+                    netloc=target_parsed.netloc,
+                )
+            )
+        except Exception:
+            return original_probe_url
 
     # ------------------------------------------------------------------
     # Internal helpers

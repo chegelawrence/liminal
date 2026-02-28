@@ -8,6 +8,7 @@ from typing import Optional
 import asyncpg
 
 from bugbounty.db.models import (
+    AnomalyPattern,
     DiscoveredURL,
     Finding,
     LiveHost,
@@ -75,6 +76,22 @@ _SCHEMA_STATEMENTS = [
         status_code INTEGER,
         discovered_at TIMESTAMPTZ NOT NULL,
         UNIQUE(scan_run_id, url)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS anomaly_patterns (
+        id TEXT PRIMARY KEY,
+        created_at TIMESTAMPTZ NOT NULL,
+        tech_stack TEXT[] NOT NULL DEFAULT '{}',
+        probe_type TEXT NOT NULL,
+        vulnerability_class TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        confirmation_method JSONB NOT NULL DEFAULT '{}',
+        response_signature TEXT NOT NULL,
+        confirmed_count INT NOT NULL DEFAULT 1,
+        fp_count INT NOT NULL DEFAULT 0,
+        last_seen TIMESTAMPTZ NOT NULL,
+        UNIQUE(vulnerability_class, probe_type, response_signature)
     )
     """,
     """
@@ -495,3 +512,91 @@ class DataStore:
             formatted_description=r["formatted_description"],
             discovered_at=r["discovered_at"],
         )
+
+    # ------------------------------------------------------------------
+    # Anomaly patterns (cross-scan learning)
+    # ------------------------------------------------------------------
+
+    async def save_pattern(self, pattern: AnomalyPattern) -> bool:
+        """Upsert an anomaly pattern; increment confirmed_count on conflict.
+
+        Returns True if a new row was inserted, False if an existing row
+        was updated.
+        """
+        import json as _json
+        async with self._pool_conn().acquire() as conn:
+            status = await conn.execute(
+                """
+                INSERT INTO anomaly_patterns
+                    (id, created_at, tech_stack, probe_type, vulnerability_class,
+                     severity, confirmation_method, response_signature,
+                     confirmed_count, fp_count, last_seen)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ON CONFLICT (vulnerability_class, probe_type, response_signature)
+                DO UPDATE SET
+                    confirmed_count = anomaly_patterns.confirmed_count + 1,
+                    last_seen       = EXCLUDED.last_seen
+                """,
+                pattern.id,
+                pattern.created_at,
+                pattern.tech_stack,
+                pattern.probe_type,
+                pattern.vulnerability_class,
+                pattern.severity,
+                _json.dumps(pattern.confirmation_method),
+                pattern.response_signature,
+                pattern.confirmed_count,
+                pattern.fp_count,
+                pattern.last_seen,
+            )
+        return int(status.split()[-1]) > 0
+
+    async def get_patterns_by_tech(
+        self, tech_stack: list[str]
+    ) -> list[AnomalyPattern]:
+        """Return patterns whose tech_stack overlaps with the given list.
+
+        Results are ordered by confirmed_count DESC, fp_count ASC, capped at 50.
+        """
+        import json as _json
+        async with self._pool_conn().acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT *
+                  FROM anomaly_patterns
+                 WHERE tech_stack && $1::text[]
+                 ORDER BY confirmed_count DESC, fp_count ASC
+                 LIMIT 50
+                """,
+                tech_stack,
+            )
+        return [
+            AnomalyPattern(
+                id=r["id"],
+                created_at=r["created_at"],
+                tech_stack=list(r["tech_stack"]),
+                probe_type=r["probe_type"],
+                vulnerability_class=r["vulnerability_class"],
+                severity=r["severity"],
+                confirmation_method=_json.loads(r["confirmation_method"])
+                if isinstance(r["confirmation_method"], str)
+                else dict(r["confirmation_method"]),
+                response_signature=r["response_signature"],
+                confirmed_count=r["confirmed_count"],
+                fp_count=r["fp_count"],
+                last_seen=r["last_seen"],
+            )
+            for r in rows
+        ]
+
+    async def increment_fp(self, pattern_id: str) -> None:
+        """Increment the false-positive counter for a pattern."""
+        async with self._pool_conn().acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE anomaly_patterns
+                   SET fp_count = fp_count + 1
+                 WHERE id = $1
+                """,
+                pattern_id,
+            )

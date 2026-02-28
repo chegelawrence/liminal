@@ -2,7 +2,7 @@
 
 > AI-powered vulnerability hunting framework for unauthenticated bug bounty targets.
 
-Automates the full pipeline from subdomain discovery to confirmed vulnerability reporting, using Claude or OpenAI as the reasoning engine and purpose-built scanners for ten vulnerability classes with minimal false positives.
+Automates the full pipeline from subdomain discovery to confirmed vulnerability reporting, using Claude or OpenAI as the reasoning engine. Purpose-built scanners cover ten hardcoded vulnerability classes; an adaptive anomaly-detection layer finds novel vulnerabilities outside that set and learns confirmed patterns across scans.
 
 ---
 
@@ -12,7 +12,7 @@ Automates the full pipeline from subdomain discovery to confirmed vulnerability 
 - [Architecture](#architecture)
 - [How It Works](#how-it-works)
   - [Recon Phase](#recon-phase)
-  - [Scan Pipeline (14 Phases)](#scan-pipeline-14-phases)
+  - [Scan Pipeline (15 Phases)](#scan-pipeline-15-phases)
   - [Port Scanning](#port-scanning)
   - [Service Exposure Detection](#service-exposure-detection)
   - [SSRF Detection (GET + POST + Headers)](#ssrf-detection-get--post--headers)
@@ -23,6 +23,7 @@ Automates the full pipeline from subdomain discovery to confirmed vulnerability 
   - [JavaScript Secret Scanning](#javascript-secret-scanning)
   - [Exposed Endpoint Detection](#exposed-endpoint-detection)
   - [AI Path Generation](#ai-path-generation)
+  - [Adaptive Novel Vulnerability Detection](#adaptive-novel-vulnerability-detection)
   - [AI Analysis](#ai-analysis)
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -39,6 +40,7 @@ Automates the full pipeline from subdomain discovery to confirmed vulnerability 
   - [Open Redirect Settings](#open-redirect-settings)
   - [JS Scanner Settings](#js-scanner-settings)
   - [Exposed Endpoint Settings](#exposed-endpoint-settings)
+  - [Adaptive Anomaly Detection Settings](#adaptive-anomaly-detection-settings)
 - [Usage](#usage)
   - [Full scan](#full-scan)
   - [Multi-target batch scan](#multi-target-batch-scan)
@@ -80,27 +82,28 @@ bugbounty scan --config my-target.yaml
 
  Recon complete: 47 subdomains, 31 live hosts, 284 ports, 1,832 URLs
 
-──────────── Phase 2: Vulnerability Scanning (14 phases) ────────────
+──────────── Phase 2: Vulnerability Scanning (15 phases) ────────────
 
  [pre]  port-url-injection   ████████████ done  — 12 new targets from open ports
- [1/14] nuclei               ████████████ done
- [2/14] subdomain-takeover   ████████████ done  — 1 takeover candidate
- [3/14] exposed-endpoints    ████████████ done  — 3 exposures
- [4/14] service-checks       ████████████ done  — 2 unauthenticated services
- [5/14] cors-scan            ████████████ done  — 2 CORS issues
- [6/14] js-scanning          ████████████ done  — 4 secrets, 12 new URLs
- [7/14] ai-path-gen          ████████████ done  — 38 AI-generated paths
- [8/14] ai-exposure          ████████████ done  — 1 hidden endpoint
- [9/14] param-discovery      ████████████ done
- [10/14] ssrf-get            ████████████ done  — 2 SSRF confirmed
- [11/14] ssrf-post           ████████████ done  — 1 SSRF (JSON body)
- [12/14] header-ssrf         ████████████ done
- [13/14] open-redirect       ████████████ done  — 1 redirect (OAuth chain)
- [14/14] xss                 ████████████ done  — 3 XSS confirmed
+ [1/15] nuclei               ████████████ done
+ [2/15] subdomain-takeover   ████████████ done  — 1 takeover candidate
+ [3/15] exposed-endpoints    ████████████ done  — 3 exposures
+ [4/15] service-checks       ████████████ done  — 2 unauthenticated services
+ [5/15] cors-scan            ████████████ done  — 2 CORS issues
+ [6/15] js-scanning          ████████████ done  — 4 secrets, 12 new URLs
+ [7/15] ai-path-gen          ████████████ done  — 38 AI-generated paths
+ [8/15] ai-exposure          ████████████ done  — 1 hidden endpoint
+ [9/15] param-discovery      ████████████ done
+ [10/15] ssrf-get            ████████████ done  — 2 SSRF confirmed
+ [11/15] ssrf-post           ████████████ done  — 1 SSRF (JSON body)
+ [12/15] header-ssrf         ████████████ done
+ [13/15] open-redirect       ████████████ done  — 1 redirect (OAuth chain)
+ [14/15] xss                 ████████████ done  — 3 XSS confirmed
+ [15/15] anomaly-detection   ████████████ done  — 1 novel finding (debug-interface)
 
- Scan complete: 17 findings
+ Scan complete: 18 findings
    SSRF: 3 · XSS: 3 · CORS: 2 · Takeover: 1 · Redirect: 1
-   Exposure: 3 · Service: 2 · AI-paths: 1 · Nuclei: 1
+   Exposure: 3 · Service: 2 · AI-paths: 1 · Nuclei: 1 · Novel: 1
 
 ──────────── Phase 3: AI Analysis ────────────
  ⠼ AI Analyzer triaging 17 findings...
@@ -121,6 +124,7 @@ bugbounty scan --config my-target.yaml
 | **Exposed endpoints (static)** | 70+ paths across 8 categories | Content validation |
 | **Exposed endpoints (AI-generated)** | LLM-reasoned paths from tech stack + JS context | HTTP 2xx/403 response |
 | **Service exposure** | 22 services probed on open ports | Targeted response validators |
+| **Novel/adaptive** | ~20 HTTP behavioural probes per host (method confusion, header injection, path/param variants) | Three-gate LLM confirmation; patterns saved and replayed on future scans |
 
 **What makes it different:**
 - OOB (out-of-band) DNS/HTTP callbacks for SSRF — only confirmed findings are reported
@@ -128,6 +132,8 @@ bugbounty scan --config my-target.yaml
 - **Open ports feed back into all scanners** — non-standard HTTP ports are automatically included in every subsequent scan phase
 - **Service exposure checks** — unauthenticated Elasticsearch, Prometheus, Kubelet, Docker daemon, etcd, Consul, Vault, and more detected via targeted probes
 - **AI path generation** — the LLM reasons about the target's tech stack and JS-extracted routes to generate custom paths beyond static lists
+- **Adaptive anomaly detection** — finds vulnerabilities outside the hardcoded set; every finding requires HTTP-level behavioural confirmation before being created
+- **Cross-scan learning** — confirmed probe patterns are saved to the database and automatically replayed against future targets with the same tech stack
 - AI triage removes remaining false positives and detects vulnerability chains
 - Reports include CWE IDs, CVSS 3.1 vectors, and ready-to-use `curl` PoC commands
 
@@ -143,7 +149,7 @@ flowchart TD
         direction TB
         PL["Planner Agent (recon strategy)"]
         RP["Recon Pipeline"]
-        SP["Scan Pipeline (14 phases)"]
+        SP["Scan Pipeline (15 phases)"]
         AN["Analyzer Agent (triage + FP removal)"]
         RR["Reporter Agent (CWE · CVSS · curl PoC)"]
         PL --> RP --> SP --> AN --> RR
@@ -158,7 +164,7 @@ flowchart TD
         GA --> KT["katana (crawl)"]
     end
 
-    subgraph SCAN["Scan Pipeline — 14 phases"]
+    subgraph SCAN["Scan Pipeline — 15 phases"]
         direction TB
         PRE["pre · port URL injection (extend target surface)"]
         NC["1 · nuclei (template scan)"]
@@ -175,14 +181,23 @@ flowchart TD
         S3["12 · SSRF headers (14 injection headers)"]
         RD["13 · open redirect (52 param names)"]
         XS["14 · XSS reflection + dalfox"]
+        AN["15 · anomaly detection (novel vulns + pattern replay)"]
     end
 
     subgraph AI["AI Layer (Claude or OpenAI)"]
         direction TB
         PLAN["Planner → ReconPlan"]
         PATH["Path Generator → custom paths"]
+        ANOMALY["Anomaly Analyzer → novel finding confirmation"]
         ANALYZE["Analyzer → TP/FP/Chains"]
         REPORT["Reporter → CWE·CVSS·PoC"]
+    end
+
+    subgraph LEARN["Cross-scan Learning"]
+        direction TB
+        PAT[("anomaly_patterns DB table")]
+        PAT -->|"replay on matching tech stack"| AN
+        AN -->|"confirmed pattern → save"| PAT
     end
 
     subgraph OUT["Output"]
@@ -238,9 +253,9 @@ sequenceDiagram
 
 ---
 
-### Scan Pipeline (14 Phases)
+### Scan Pipeline (15 Phases)
 
-The scan pipeline runs in a fixed order. Open port results are processed first to extend the target surface before any phase runs. JS scanning discovers new URLs and tech context that feeds the AI path generator, and AI-generated paths feed back into the exposure scanner.
+The scan pipeline runs in a fixed order. Open port results are processed first to extend the target surface before any phase runs. JS scanning discovers new URLs and tech context that feeds the AI path generator, and AI-generated paths feed back into the exposure scanner. The anomaly detection phase (15) runs after XSS and before persistence.
 
 ```mermaid
 flowchart LR
@@ -274,12 +289,18 @@ flowchart LR
         P14["14 · XSS reflection + dalfox"]
     end
 
-    PRE --> FAST --> PARAM --> SSRF_BLOCK --> INJECT
+    subgraph NOVEL["Novel / Adaptive"]
+        P15["15 · anomaly detection pattern replay + fresh probes"]
+    end
+
+    PRE --> FAST --> PARAM --> SSRF_BLOCK --> INJECT --> NOVEL
 
     P6 --"new URLs + tech context"--> P7
     P7 --"AI paths"--> P8
     P0 --"port-derived URLs"--> P10
     P0 --"port-derived URLs"--> P14
+    DB[("anomaly_patterns")] --"known patterns"--> P15
+    P15 --"confirmed patterns"--> DB
 ```
 
 ---
@@ -672,6 +693,129 @@ See [AI Path Generation](#ai-path-generation) for how the `ai_generated` categor
 
 ---
 
+### Adaptive Novel Vulnerability Detection
+
+Phase 15 finds vulnerabilities that are **not in the hardcoded scanner set** by probing for behavioural anomalies and using the LLM to hypothesise and confirm them. It also replays confirmed patterns from previous scans against new targets with the same tech stack.
+
+**The non-negotiable FP constraint:** No finding is ever created by the LLM making a judgment call alone. Every finding requires an HTTP-level behavioural confirmation: a specific probe that produces specific, unambiguous content in the response.
+
+```mermaid
+flowchart TD
+    HOSTS["Live hosts (capped at max_hosts, deduplicated to 1 per eTLD+1)"]
+
+    HOSTS --> REPLAY
+    HOSTS --> PROBE
+
+    subgraph REPLAY["Step A — Pattern replay (cross-scan learning)"]
+        direction TB
+        DB[("anomaly_patterns DB")] -->|"WHERE tech_stack overlaps"| PAT["Matching confirmed patterns"]
+        PAT --> EXEC_R["Execute stored confirmation probe against current target"]
+        EXEC_R --> EVAL_R["LLM evaluates actual response"]
+        EVAL_R -->|confirmed| FINDING_R["Novel finding (source: pattern-replay)"]
+        EVAL_R -->|not confirmed| FP["Increment fp_count for pattern"]
+    end
+
+    subgraph PROBE["Step B — Fresh anomaly detection"]
+        direction TB
+        BASE["Baseline GET per host"] --> VARIANTS["~20 HTTP probe variants"]
+
+        subgraph VARIANTS["~20 HTTP probe variants"]
+            direction LR
+            M["Method confusion × 5 TRACE · PUT · DELETE · PATCH method-override"]
+            H["Header injection × 8 X-Forwarded-For · X-Original-URL XXE · Accept variants"]
+            P["Parameter/path × 7 ?debug=true · ?format=xml path traversal · null byte overflow"]
+        end
+
+        VARIANTS --> SCORE["Divergence scoring (11 signals)"]
+
+        subgraph SCORE["Divergence scoring"]
+            direction LR
+            S1["Status 2xx↔4xx flip   +5"]
+            S2["Other status change    +3"]
+            S3["Error keywords         +4"]
+            S4["Internal IP in body    +4"]
+            S5["Credential pattern     +4"]
+            S6["Body delta >50%        +3"]
+            S7["Response time >5×      +3"]
+            S8["Content-Type changed   +1"]
+            S9["Debug headers appeared +2"]
+        end
+
+        SCORE -->|"score >= 5"| GATE1["Gate 1 passed — send to LLM"]
+        SCORE -->|"score < 5"| DISCARD["Discard"]
+
+        GATE1 --> HYP["LLM: formulate_hypothesis tool
+        Must name a class from closed list
+        Rejects: 'other' class or confidence='low'"]
+
+        HYP -->|"accepted"| DESIGN["LLM: design_confirmation_probe tool
+        confirms_if must be specific content
+        Rejects: 'status changes', 'different response'"]
+
+        DESIGN -->|"accepted"| EXEC["Framework executes probe
+        LLM cannot hallucinate the response"]
+
+        EXEC --> EVAL["LLM: evaluate_confirmation tool
+        confirmed=True with empty/generic evidence
+        → forced to False"]
+
+        EVAL -->|"confirmed + severity >= medium"| FINDING["Novel finding (source: anomaly-detection)"]
+        EVAL -->|"not confirmed"| DISCARD2["No finding"]
+
+        FINDING --> SAVE[("Save to anomaly_patterns for future scans")]
+    end
+```
+
+**Probe categories (20 total):**
+
+| Category | Probes | What they detect |
+|---|---|---|
+| **Method confusion** (5) | `TRACE`, `PUT`, `DELETE`, `PATCH`, `X-HTTP-Method-Override: DELETE` | Unexpected method acceptance, reflected headers in TRACE |
+| **Header injection** (8) | `X-Forwarded-For: 127.0.0.1/169.254.169.254`, `X-Forwarded-Host: evil.com`, `X-Original-URL: /admin`, `X-Rewrite-URL: /admin`, XXE Content-Type, `Accept: application/xml`, `Accept: text/html` | Routing bypass, host header injection, XXE, content negotiation issues |
+| **Parameter/path** (7) | `?debug=true`, `?format=xml`, `?callback=x` (JSONP), `?admin=true`, URL-encoded path traversal, null byte, 2000-char overflow | Debug interfaces, content format overrides, access control bypass, path traversal, error disclosure |
+
+**Divergence scoring — threshold ≥ 5 to proceed to LLM:**
+
+| Signal | Score |
+|---|---|
+| Status 4xx/5xx ↔ 2xx flip | +5 |
+| Any other status change | +3 |
+| Error keywords (`exception`, `traceback`, `SQLSTATE`, `ORA-`, ...) | +4 |
+| Internal IP in body (`10.x`, `172.16-31.x`, `192.168.x`, `169.254.169.254`) | +4 |
+| Credential pattern (`password=`, `api_key=`, `Bearer `) | +4 |
+| Body length delta > 50% of baseline | +3 |
+| Body length delta > 20% | +1 |
+| Response time > 5× baseline | +3 |
+| Response time > 2× baseline | +1 |
+| Content-Type changed | +1 |
+| Debug/internal header appeared | +2 |
+
+**All seven false-positive gates:**
+
+| Gate | Where | Mechanism |
+|---|---|---|
+| 1 | `AnomalyProber` | Divergence score ≥ 5 before LLM is contacted |
+| 2a | `formulate_hypothesis` tool | LLM must name a class from a closed list of 12 |
+| 2b | `formulate_hypothesis` tool | LLM confidence must be "medium" or "high" |
+| 3a | `design_confirmation_probe` tool | `confirms_if` must be specific content, not status/length signal |
+| 3b | Framework | Probe is actually executed — LLM cannot hallucinate the result |
+| 3c | `evaluate_confirmation` tool | `confirmed=True` with empty or generic evidence is blocked |
+| 4 | `_run_anomaly_phase` | `min_severity: medium` — low/info novel findings never auto-created |
+
+**Cross-scan learning:** When a novel finding is confirmed, its probe details and expected content pattern are stored in the `anomaly_patterns` table. On the next scan of a host with the same tech stack, those patterns are replayed directly (bypassing Gate 1) — the LLM only needs to evaluate the response, not re-hypothesise from scratch. False-positive replays increment a `fp_count` counter; noisy patterns are deprioritised over time.
+
+**Allowed vulnerability classes (closed list):**
+
+```
+path-traversal  |  ssrf  |  xxe  |  method-confusion  |  info-disclosure
+injection  |  auth-bypass  |  header-injection  |  content-type-confusion
+parameter-pollution  |  idok-exposure  |  debug-interface
+```
+
+Novel findings appear in reports with the `ai-detected` and `novel` tags and a `source` field set to either `anomaly-detection` or `pattern-replay`.
+
+---
+
 ### AI Analysis
 
 After automated scanning, an AI agent triages all findings, removes false positives, detects vulnerability chains, and formats surviving findings for bug bounty submission.
@@ -1058,6 +1202,37 @@ vuln:
     ai_path_generation: true
 ```
 
+### Adaptive Anomaly Detection Settings
+
+```yaml
+vuln:
+  anomaly:
+    enabled: true
+    concurrent: 5          # probe concurrency per host
+    timeout: 10.0          # per-request timeout (seconds)
+    score_threshold: 5     # minimum divergence score before contacting the LLM
+    max_hosts: 50          # cost control — cap hosts probed per scan
+    min_severity: "medium" # never auto-create low/info novel findings
+    replay_patterns: true  # proactively replay confirmed patterns from DB
+```
+
+**Tuning guidance:**
+
+| Setting | Lower | Higher |
+|---|---|---|
+| `score_threshold` | More LLM calls, broader coverage | Fewer calls, only high-confidence anomalies |
+| `max_hosts` | Faster scan, less coverage | Slower scan, more hosts probed |
+| `concurrent` | Less load on target | Faster probing |
+| `replay_patterns: false` | Skip cross-scan learning (useful for isolated scans) | — |
+
+To disable the phase entirely:
+
+```yaml
+vuln:
+  anomaly:
+    enabled: false
+```
+
 ---
 
 ## Usage
@@ -1289,12 +1464,12 @@ This is a first-class concern. Every layer of the pipeline applies FP reduction.
 
 ```mermaid
 flowchart LR
-    RAW["Raw findings (10 scanner types)"]
+    RAW["Raw findings (11 scanner types)"]
 
     RAW --> L1["Layer 1 Scope validation Every result checked before it's saved"]
-    L1 --> L2["Layer 2 In-tool FP filtering SSRF: OOB-only or re-verified XSS: unescaped context check CORS: credentials present Takeover: body fingerprint Exposure: content validation Service: response body validator Redirect: actual Location header"]
+    L1 --> L2["Layer 2 In-tool FP filtering SSRF: OOB-only or re-verified XSS: unescaped context check CORS: credentials present Takeover: body fingerprint Exposure: content validation Service: response body validator Redirect: actual Location header Novel: 7-gate behavioural confirmation pipeline"]
     L2 --> L3["Layer 3 Re-verification pass Each finding re-tested before writing to DB"]
-    L3 --> L4["Layer 4 AI triage FP likelihood scored per vulnerability class"]
+    L3 --> L4["Layer 4 AI triage FP likelihood scored per vulnerability class (all findings including novel)"]
     L4 --> OUT["Confirmed findings ready for submission"]
 ```
 
@@ -1368,6 +1543,12 @@ results/
 | Service: Elasticsearch unauth | CWE-306 | 8.5 |
 | Service: Prometheus / Grafana | CWE-306 | 5.3–8.5 |
 | AI-identified exposed path | CWE-200 | 5.3 |
+| Novel: path-traversal (AI-detected) | CWE-22 | 7.5 |
+| Novel: info-disclosure (AI-detected) | CWE-200 | 5.3 |
+| Novel: debug-interface (AI-detected) | CWE-215 | 5.3 |
+| Novel: auth-bypass (AI-detected) | CWE-284 | 7.5 |
+| Novel: ssrf (AI-detected) | CWE-918 | 7.5 |
+| Novel: xxe (AI-detected) | CWE-611 | 7.5 |
 
 ---
 
@@ -1408,6 +1589,7 @@ bugbounty-agent/
 │   │   ├── exposure.py          # ExposureScanner (8 categories + AI-generated paths)
 │   │   ├── port_service_checker.py  # PortServiceChecker (22 services on open ports)
 │   │   ├── ai_path_generator.py     # AIPathGenerator (LLM-reasoned path generation)
+│   │   ├── anomaly.py               # AnomalyProber: 20 probes, divergence scoring (Phase 15)
 │   │   ├── fuzzer.py            # ffuf, dalfox (legacy)
 │   │   └── discovery.py         # gau, katana, waybackurls
 │   │
@@ -1415,16 +1597,17 @@ bugbounty-agent/
 │   │   ├── base.py              # BaseAgent: provider-agnostic agentic loop
 │   │   ├── planner.py           # PlannerAgent → ReconPlan (7-dimension scoring)
 │   │   ├── analyzer.py          # AnalyzerAgent → triage, FP removal, chains
+│   │   ├── anomaly_analyzer.py  # AnomalyAnalysisAgent: 3-stage novel finding confirmation
 │   │   └── reporter.py          # ReporterAgent → CWE, CVSS, curl PoC, remediation
 │   │
 │   ├── pipeline/
 │   │   ├── recon.py             # ReconPipeline: subdomain → live hosts → ports → URLs
-│   │   ├── scan.py              # ScanPipeline: 14-phase vulnerability scan
+│   │   ├── scan.py              # ScanPipeline: 15-phase vulnerability scan
 │   │   └── orchestrator.py      # Orchestrator: end-to-end coordinator
 │   │
 │   ├── db/
-│   │   ├── models.py            # Pydantic models: Finding, LiveHost, OpenPort, ...
-│   │   └── store.py             # DataStore: asyncpg PostgreSQL CRUD + deduplication
+│   │   ├── models.py            # Pydantic models: Finding, LiveHost, OpenPort, AnomalyPattern, ...
+│   │   └── store.py             # DataStore: asyncpg PostgreSQL CRUD + deduplication + pattern learning
 │   │
 │   ├── reporting/
 │   │   ├── generator.py         # ReportGenerator: Jinja2 → HTML/MD/JSON
