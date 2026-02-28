@@ -12,7 +12,8 @@ Phases:
 8. HTTP header injection SSRF.
 9. Open redirect detection.
 10. XSS scanning (reflection + dalfox).
-11. Persist all findings.
+11. Adaptive anomaly detection (novel vulnerability finder + cross-scan pattern replay).
+12. Persist all findings.
 """
 
 from __future__ import annotations
