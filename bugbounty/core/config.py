@@ -15,6 +15,23 @@ class TargetConfig(BaseModel):
     domain: str
     program_name: str = "Unknown Program"
     platform: str = "HackerOne"
+    in_scope: list[str] = Field(default_factory=list)
+    out_of_scope: list[str] = Field(default_factory=list)
+
+
+class NotificationsConfig(BaseModel):
+    slack_webhook: str = ""
+    discord_webhook: str = ""
+    webhook_url: str = ""
+    email_to: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    notify_on_start: bool = False
+    notify_on_complete: bool = True
+    notify_on_critical: bool = True
 
 
 class ScopeConfig(BaseModel):
@@ -305,13 +322,15 @@ class OutputConfig(BaseModel):
 class AppConfig(BaseModel):
     """Top-level application configuration."""
 
-    target: TargetConfig
+    target: TargetConfig = Field(default_factory=lambda: TargetConfig(domain=""))
+    targets: list[TargetConfig] = Field(default_factory=list)
     scope: ScopeConfig = Field(default_factory=ScopeConfig)
     rate_limits: RateLimitsConfig = Field(default_factory=RateLimitsConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     vuln: VulnToolsConfig = Field(default_factory=VulnToolsConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+    notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
 
     # Injected from environment – not from YAML
     anthropic_api_key: str = ""
@@ -326,6 +345,13 @@ class AppConfig(BaseModel):
             self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
         if not self.db_dsn:
             self.db_dsn = os.environ.get("DATABASE_URL", "")
+        # Inject notification credentials from environment if not set in YAML
+        if not self.notifications.slack_webhook:
+            self.notifications.slack_webhook = os.environ.get("SLACK_WEBHOOK_URL", "")
+        if not self.notifications.discord_webhook:
+            self.notifications.discord_webhook = os.environ.get("DISCORD_WEBHOOK_URL", "")
+        if not self.notifications.smtp_password:
+            self.notifications.smtp_password = os.environ.get("SMTP_PASSWORD", "")
         return self
 
 
@@ -354,6 +380,10 @@ def load_config(path: str, domain_override: Optional[str] = None) -> AppConfig:
     if domain_override:
         raw.setdefault("target", {})
         raw["target"]["domain"] = domain_override
+
+    # Ensure target has at least a placeholder domain when only targets list is given
+    if "target" not in raw and "targets" in raw and raw["targets"]:
+        raw["target"] = {"domain": raw["targets"][0]["domain"]}
 
     config = AppConfig(**raw)
 

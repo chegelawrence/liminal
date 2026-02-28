@@ -1,0 +1,60 @@
+# BugBounty Agent - Multi-Target Configuration Example
+#
+# Drop this on your EC2 instance, fill in the API keys via environment
+# variables or the .env file, then start the service:
+#
+#   systemctl start bugbounty-agent
+#   journalctl -u bugbounty-agent -f
+
+# ── Multiple targets (scanned sequentially) ─────────────────────────────────
+targets:
+  - domain: "api.example.com"
+    program_name: "Example API Bug Bounty"
+    platform: "HackerOne"
+    in_scope:
+      - "*.api.example.com"
+      - "api.example.com"
+    out_of_scope:
+      - "staging.api.example.com"
+
+  - domain: "app.example.org"
+    program_name: "Example App Program"
+    platform: "Bugcrowd"
+    in_scope:
+      - "*.app.example.org"
+
+# ── Notifications ────────────────────────────────────────────────────────────
+# Credentials can be set here or via environment variables:
+#   SLACK_WEBHOOK_URL, DISCORD_WEBHOOK_URL, SMTP_PASSWORD
+notifications:
+  slack_webhook: ""        # or set SLACK_WEBHOOK_URL env var
+  discord_webhook: ""      # or set DISCORD_WEBHOOK_URL env var
+  webhook_url: ""          # generic HTTP POST endpoint
+  email_to: ""
+  smtp_host: ""
+  smtp_port: 587
+  smtp_user: ""
+  smtp_from: ""
+  notify_on_start: false
+  notify_on_complete: true
+  notify_on_critical: true
+
+# ── Rate limits ──────────────────────────────────────────────────────────────
+rate_limits:
+  requests_per_second: 10
+  concurrent_requests: 5
+  nuclei_rate: 50
+  ffuf_rate: 100
+
+# ── AI provider ──────────────────────────────────────────────────────────────
+ai:
+  provider: "claude"
+  claude_model: "claude-opus-4-6"
+
+# ── Output ───────────────────────────────────────────────────────────────────
+output:
+  results_dir: "/opt/bugbounty-agent/results"
+  formats:
+    - html
+    - markdown
+    - json

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -29,6 +30,7 @@ from bugbounty.agents.planner import PlannerAgent
 from bugbounty.agents.reporter import ReporterAgent
 from bugbounty.core.config import AppConfig
 from bugbounty.core.llm import create_provider
+from bugbounty.core.notifier import Notifier
 from bugbounty.core.rate_limiter import RateLimiter
 from bugbounty.core.scope import ScopeValidator
 from bugbounty.db.models import AnalysisResult, ScanRun
@@ -38,6 +40,15 @@ from bugbounty.pipeline.scan import ScanPipeline
 from bugbounty.reporting.generator import ReportGenerator
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class OrchestratorResult:
+    """Result returned by Orchestrator.run()."""
+
+    report_dir: str
+    finding_counts: dict[str, int] = field(default_factory=dict)
+
 
 _SEVERITY_COLORS = {
     "critical": "bold red",
@@ -67,8 +78,9 @@ class Orchestrator:
     report generation, and Rich console output.
     """
 
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(self, config: AppConfig, notifier: Optional[Notifier] = None) -> None:
         self.config = config
+        self.notifier = notifier
 
         # Resolve output directory (make absolute if relative)
         results_dir = Path(config.output.results_dir).expanduser()
@@ -107,7 +119,7 @@ class Orchestrator:
         only_recon: bool = False,
         only_scan: bool = False,
         resume_scan_run_id: Optional[str] = None,
-    ) -> str:
+    ) -> OrchestratorResult:
         """Execute the full scan workflow.
 
         Args:
@@ -117,7 +129,7 @@ class Orchestrator:
             resume_scan_run_id: Resume an existing scan run ID.
 
         Returns:
-            Path to the generated report directory as a string.
+            OrchestratorResult with report_dir and finding_counts.
         """
         # Ensure output directory exists
         self.results_dir.mkdir(parents=True, exist_ok=True)
@@ -130,6 +142,7 @@ class Orchestrator:
 
         domain = self.config.target.domain
         program_name = self.config.target.program_name
+        _start_time = datetime.now(timezone.utc)
 
         # Create or resume scan run
         if resume_scan_run_id:
@@ -151,6 +164,9 @@ class Orchestrator:
                 status="running",
             )
             await self.store.save_scan_run(scan_run)
+
+        if self.notifier:
+            await self.notifier.scan_started(domain, scan_run.id)
 
         # Display scan info panel
         vuln_cfg = self.config.vuln
@@ -305,6 +321,17 @@ class Orchestrator:
             for f in analysis.true_positives + analysis.false_positives:
                 await self.store.update_finding(f)
 
+            # Notify on critical true positives
+            if self.notifier:
+                for f in analysis.true_positives:
+                    if f.severity == "critical":
+                        await self.notifier.critical_finding(
+                            domain=domain,
+                            name=f.name or f.template_id or "Unknown",
+                            host=f.host or "",
+                            cvss=f.cvss_score if hasattr(f, "cvss_score") else None,
+                        )
+
             # ----------------------------------------------------------
             # Phase 4: AI Report Writer
             # ----------------------------------------------------------
@@ -375,7 +402,27 @@ class Orchestrator:
                 f"Scan ID: [cyan]{scan_run.id}[/cyan]"
             )
 
-            return str(report_dir_path)
+            finding_counts = {
+                "critical": analysis.total_critical,
+                "high": analysis.total_high,
+                "medium": analysis.total_medium,
+                "low": analysis.total_low,
+            }
+            duration = (datetime.now(timezone.utc) - _start_time).total_seconds()
+
+            if self.notifier:
+                await self.notifier.scan_complete(
+                    domain=domain,
+                    run_id=scan_run.id,
+                    duration_seconds=duration,
+                    counts=finding_counts,
+                    report_path=str(report_dir_path),
+                )
+
+            return OrchestratorResult(
+                report_dir=str(report_dir_path),
+                finding_counts=finding_counts,
+            )
 
         except Exception as exc:
             logger.exception("Scan failed with unexpected error")
@@ -383,6 +430,8 @@ class Orchestrator:
             scan_run.completed_at = datetime.now(timezone.utc)
             await self.store.update_scan_run(scan_run)
             console.print(f"[bold red]Scan failed:[/bold red] {exc}")
+            if self.notifier:
+                await self.notifier.scan_failed(domain=domain, error=str(exc))
             raise
         finally:
             await self.store.close()

@@ -1,0 +1,21 @@
+[Unit]
+Description=BugBounty Agent - Autonomous Security Scanner
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=bugbounty
+WorkingDirectory=/opt/bugbounty-agent
+EnvironmentFile=/opt/bugbounty-agent/.env
+ExecStart=/opt/bugbounty-agent/venv/bin/bugbounty scan \
+    --config /opt/bugbounty-agent/config/targets.yaml \
+    --log-file /var/log/bugbounty-agent/scan.log
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bugbounty-agent
+Restart=on-failure
+RestartSec=300
+
+[Install]
+WantedBy=multi-user.target

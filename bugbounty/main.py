@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -15,7 +17,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from bugbounty.core.config import load_config
+from bugbounty.core.config import AppConfig, TargetConfig, load_config
+from bugbounty.core.notifier import Notifier
 from bugbounty.db.store import DataStore
 from bugbounty.pipeline.orchestrator import Orchestrator
 
@@ -32,14 +35,31 @@ _BANNER = r"""[bold cyan]
 """
 
 
-def _configure_logging(verbose: bool) -> None:
+def _configure_logging(verbose: bool, log_file: Optional[str] = None) -> None:
     level = logging.DEBUG if verbose else logging.WARNING
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
+    handlers: list[logging.Handler] = []
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(level)
+    console_handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S")
     )
-    # Keep httpx/anthropic quieter unless debug
+    handlers.append(console_handler)
+
+    if log_file:
+        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
+        handlers.append(file_handler)
+
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO, handlers=handlers)
+
     if not verbose:
         logging.getLogger("httpx").setLevel(logging.ERROR)
         logging.getLogger("anthropic").setLevel(logging.ERROR)
@@ -82,6 +102,11 @@ def cli() -> None:
     help="Only run vulnerability scanning (requires prior recon for the same target)",
 )
 @click.option("--verbose", "-v", is_flag=True, default=False, help="Enable verbose logging")
+@click.option(
+    "--log-file",
+    default=None,
+    help="Path to write log output (e.g. /var/log/bugbounty/scan.log)",
+)
 def scan(
     config: str,
     domain: Optional[str],
@@ -90,8 +115,9 @@ def scan(
     only_recon: bool,
     only_scan: bool,
     verbose: bool,
+    log_file: Optional[str],
 ) -> None:
-    """Run a full bug bounty scan against the configured target.
+    """Run a full bug bounty scan against the configured target(s).
 
     The scan consists of:
     \b
@@ -100,22 +126,22 @@ def scan(
     3. Vulnerability Scanning – nuclei, ffuf, dalfox
     4. AI Analysis    – false positive removal, PoC suggestions, chain detection
     5. Report Generation – HTML, Markdown, JSON
-    """
-    _configure_logging(verbose)
 
-    # Validate mutual exclusion
+    When the config file contains a `targets:` list, all targets are scanned
+    sequentially and a batch summary is printed at the end.
+    """
+    _configure_logging(verbose, log_file)
+
     if only_recon and only_scan:
         console.print("[red]Error:[/red] --only-recon and --only-scan are mutually exclusive.")
         sys.exit(1)
 
-    # Load configuration
     try:
         app_config = load_config(config, domain_override=domain)
     except (FileNotFoundError, ValueError) as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
         sys.exit(1)
 
-    # Check for API key
     if not app_config.anthropic_api_key:
         console.print(
             "[red]Error:[/red] ANTHROPIC_API_KEY is not set. "
@@ -123,7 +149,6 @@ def scan(
         )
         sys.exit(1)
 
-    # Check for database DSN
     if not app_config.db_dsn:
         console.print(
             "[red]Error:[/red] DATABASE_URL is not set. "
@@ -131,30 +156,196 @@ def scan(
         )
         sys.exit(1)
 
-    # Override output directory if provided
     if output:
         app_config.output.results_dir = output
 
-    # Run
+    # ----------------------------------------------------------------
+    # Build target list
+    # ----------------------------------------------------------------
+    all_targets: list[TargetConfig] = []
+    if domain:
+        # Explicit --domain override: single target, ignore config lists
+        all_targets = [TargetConfig(domain=domain)]
+    else:
+        if app_config.target.domain:
+            all_targets.append(app_config.target)
+        all_targets.extend(app_config.targets)
+
+    if not all_targets:
+        console.print("[red]Error:[/red] No target domain configured.")
+        sys.exit(1)
+
+    notifier = Notifier(app_config.notifications)
+
+    # ----------------------------------------------------------------
+    # Graceful shutdown flag (SIGTERM + KeyboardInterrupt)
+    # ----------------------------------------------------------------
+    shutdown_requested = False
+
+    def _request_shutdown(signum, frame):  # noqa: ANN001
+        nonlocal shutdown_requested
+        shutdown_requested = True
+        console.print("\n[yellow]Shutdown requested — will stop after current target.[/yellow]")
+
+    signal.signal(signal.SIGTERM, _request_shutdown)
+
+    # ----------------------------------------------------------------
+    # Batch execution
+    # ----------------------------------------------------------------
+    batch_results: dict[str, dict] = {}
+    is_batch = len(all_targets) > 1
+
     try:
-        report_path = asyncio.run(
-            Orchestrator(app_config).run(
-                console=console,
-                only_recon=only_recon,
-                only_scan=only_scan,
-                resume_scan_run_id=resume,
-            )
-        )
-        console.print(f"\n[bold green]Reports saved to:[/bold green] {report_path}")
+        for target in all_targets:
+            if shutdown_requested:
+                break
+
+            # Build per-target config: merge target-level scope into the
+            # global scope if the target has its own in_scope/out_of_scope
+            per_config = app_config.model_copy(deep=True)
+            per_config.target = target
+            if target.in_scope:
+                per_config.scope.in_scope = list(target.in_scope)
+            if target.out_of_scope:
+                per_config.scope.out_of_scope = list(target.out_of_scope)
+
+            domain_label = target.domain
+            console.rule(f"[bold cyan]Target: {domain_label}[/bold cyan]")
+
+            start_ts = time.monotonic()
+            status = "failed"
+            finding_counts: dict[str, int] = {}
+            report_dir = ""
+
+            max_retries = 2
+            attempt = 0
+            last_error: Optional[Exception] = None
+
+            while attempt <= max_retries:
+                try:
+                    result = asyncio.run(
+                        Orchestrator(per_config, notifier).run(
+                            console=console,
+                            only_recon=only_recon,
+                            only_scan=only_scan,
+                            resume_scan_run_id=resume if not is_batch else None,
+                        )
+                    )
+                    status = "complete"
+                    finding_counts = result.finding_counts
+                    report_dir = result.report_dir
+                    last_error = None
+                    break
+                except KeyboardInterrupt:
+                    shutdown_requested = True
+                    console.print("\n[yellow]Interrupted — stopping after this target.[/yellow]")
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    attempt += 1
+                    if attempt <= max_retries:
+                        console.print(
+                            f"[yellow]Scan failed ({exc}). "
+                            f"Retrying in 60s (attempt {attempt}/{max_retries})...[/yellow]"
+                        )
+                        time.sleep(60)
+                    else:
+                        console.print(
+                            f"[bold red]All {max_retries} retries exhausted for {domain_label}.[/bold red]"
+                        )
+
+            elapsed = time.monotonic() - start_ts
+            batch_results[domain_label] = {
+                "status": status,
+                "duration_seconds": elapsed,
+                "finding_counts": finding_counts,
+                "report_dir": report_dir,
+                "error": str(last_error) if last_error else None,
+            }
+
+            if report_dir:
+                console.print(f"\n[bold green]Reports saved to:[/bold green] {report_dir}")
+
+            if shutdown_requested:
+                break
+
     except KeyboardInterrupt:
         console.print("\n[yellow]Scan interrupted by user.[/yellow]")
-        sys.exit(130)
-    except Exception as exc:
-        console.print(f"\n[bold red]Fatal error:[/bold red] {exc}")
-        if verbose:
-            import traceback
-            traceback.print_exc()
-        sys.exit(1)
+
+    # ----------------------------------------------------------------
+    # Batch summary
+    # ----------------------------------------------------------------
+    if is_batch and batch_results:
+        _print_batch_summary(batch_results)
+
+        succeeded = sum(1 for r in batch_results.values() if r["status"] == "complete")
+        failed = len(batch_results) - succeeded
+        total_findings = sum(
+            sum(r["finding_counts"].values()) for r in batch_results.values()
+        )
+
+        try:
+            asyncio.run(
+                notifier.batch_complete(
+                    total=len(batch_results),
+                    succeeded=succeeded,
+                    failed=failed,
+                    total_findings=total_findings,
+                )
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning("Batch complete notification failed: %s", exc)
+
+        if failed:
+            sys.exit(1)
+    elif batch_results:
+        only_result = next(iter(batch_results.values()))
+        if only_result["status"] == "failed":
+            sys.exit(1)
+
+
+def _print_batch_summary(results: dict[str, dict]) -> None:
+    """Print a Rich table summarising all batch scan results."""
+    console.rule("[bold]Batch Summary[/bold]")
+
+    table = Table(show_header=True, header_style="bold dim", show_lines=True)
+    table.add_column("Target", style="cyan")
+    table.add_column("Status")
+    table.add_column("Duration", justify="right")
+    table.add_column("Crit", justify="right")
+    table.add_column("High", justify="right")
+    table.add_column("Med", justify="right")
+    table.add_column("Low", justify="right")
+
+    for domain, info in results.items():
+        elapsed = info["duration_seconds"]
+        minutes = int(elapsed // 60)
+        seconds = int(elapsed % 60)
+        duration_str = f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
+
+        counts = info.get("finding_counts", {})
+        status = info["status"]
+
+        if status == "complete":
+            status_text = Text(status, style="bold green")
+        else:
+            status_text = Text(status, style="bold red")
+
+        def _count(key: str) -> str:
+            v = counts.get(key, 0)
+            return str(v) if v else "–"
+
+        table.add_row(
+            domain,
+            status_text,
+            duration_str,
+            _count("critical"),
+            _count("high"),
+            _count("medium"),
+            _count("low"),
+        )
+
+    console.print(table)
 
 
 # ---------------------------------------------------------------------------
@@ -369,8 +560,6 @@ def check_tools() -> None:
 
     console.print(table)
 
-    # Check API keys
-    import os
     key_table = Table(title="API Keys", show_header=True, header_style="bold dim")
     key_table.add_column("Provider")
     key_table.add_column("Status")

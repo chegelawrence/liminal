@@ -29,6 +29,8 @@ Automates the full pipeline from subdomain discovery to confirmed vulnerability 
 - [Configuration](#configuration)
   - [AI Provider](#ai-provider)
   - [Scope](#scope)
+  - [Multi-Target Batch Scanning](#multi-target-batch-scanning)
+  - [Notifications](#notifications)
   - [Port Scanning](#port-scanning-1)
   - [SSRF Settings](#ssrf-settings)
   - [XSS Settings](#xss-settings)
@@ -38,6 +40,10 @@ Automates the full pipeline from subdomain discovery to confirmed vulnerability 
   - [JS Scanner Settings](#js-scanner-settings)
   - [Exposed Endpoint Settings](#exposed-endpoint-settings)
 - [Usage](#usage)
+  - [Full scan](#full-scan)
+  - [Multi-target batch scan](#multi-target-batch-scan)
+  - [Log to file (background-friendly)](#log-to-file-background-friendly)
+  - [Autonomous background operation (systemd)](#autonomous-background-operation-systemd)
 - [False Positive Minimisation](#false-positive-minimisation)
 - [Output & Reports](#output--reports)
 - [Project Structure](#project-structure)
@@ -850,6 +856,91 @@ scope:
 
 > Out-of-scope rules always take precedence over in-scope wildcards.
 
+### Multi-Target Batch Scanning
+
+Instead of a single `target:` block, define a `targets:` list. The agent scans them sequentially and prints a consolidated summary at the end.
+
+Each target can carry its own scope — handy when managing multiple bug bounty programmes in one config file.
+
+```yaml
+# config/targets.yaml
+
+targets:
+  - domain: "api.example.com"
+    program_name: "Example API Bug Bounty"
+    platform: "HackerOne"
+    in_scope:
+      - "*.api.example.com"
+      - "api.example.com"
+    out_of_scope:
+      - "staging.api.example.com"
+
+  - domain: "app.example.org"
+    program_name: "Example App Program"
+    platform: "Bugcrowd"
+    in_scope:
+      - "*.app.example.org"
+
+# All other sections (rate_limits, tools, vuln, ai, output) apply globally
+# to every target in the list.
+```
+
+When a target defines its own `in_scope`/`out_of_scope`, those values replace the global `scope:` block for that target only. If a target omits them, the global scope is used.
+
+The single-target format (`target:`) remains fully supported for backward compatibility.
+
+---
+
+### Notifications
+
+The agent can push notifications to Slack, Discord, a generic webhook, or email when scans start, complete, or surface a critical finding. Configure in YAML or inject credentials via environment variables.
+
+```yaml
+notifications:
+  # Slack incoming webhook — set here or via SLACK_WEBHOOK_URL env var
+  slack_webhook: ""
+
+  # Discord incoming webhook — set here or via DISCORD_WEBHOOK_URL env var
+  discord_webhook: ""
+
+  # Generic HTTP endpoint — receives POST {"message": "...", "source": "bugbounty-agent"}
+  webhook_url: ""
+
+  # Email via SMTP + STARTTLS
+  email_to: "team@example.com"
+  smtp_host: "smtp.example.com"
+  smtp_port: 587
+  smtp_user: "alerts@example.com"
+  smtp_from: "alerts@example.com"
+  # Password: set here or via SMTP_PASSWORD env var
+
+  # Control which events trigger a notification
+  notify_on_start: false     # fire when each target scan begins
+  notify_on_complete: true   # fire when each target scan finishes
+  notify_on_critical: true   # immediate alert per critical finding
+```
+
+**Environment variable injection** (preferred for secrets):
+
+```bash
+# .env or systemd EnvironmentFile
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../...
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+SMTP_PASSWORD=super-secret
+```
+
+**Notification events:**
+
+| Event | Triggered by | Content |
+|---|---|---|
+| Scan started | `notify_on_start: true` | Domain, Run ID |
+| Scan complete | `notify_on_complete: true` | Domain, duration, severity counts, report path |
+| Critical finding | `notify_on_critical: true` | Domain, vulnerability name, affected host |
+| Scan failed | Always | Domain, error message |
+| Batch complete | After all targets | Total/succeeded/failed, total findings |
+
+All configured backends (Slack, Discord, webhook, email) fire in parallel. A delivery failure is logged but never interrupts the scan.
+
 ### Port Scanning
 
 ```yaml
@@ -1030,6 +1121,166 @@ bugbounty report 3f2a1b9c-... --config my-target.yaml --format html
 bugbounty scan --config my-target.yaml --verbose
 ```
 
+### Multi-target batch scan
+
+Add a `targets:` list to your config (see [Multi-Target Batch Scanning](#multi-target-batch-scanning)) then run normally — the agent scans each target in sequence and prints a summary table when all are done:
+
+```bash
+bugbounty scan --config config/targets.yaml
+```
+
+```
+╔══════════════════════╦══════════╦══════════╦══════╦══════╦═════╗
+║ Target               ║ Status   ║ Duration ║ Crit ║ High ║ Med ║
+╠══════════════════════╬══════════╬══════════╬══════╬══════╬═════╣
+║ api.example.com      ║ complete ║ 43m 12s  ║  2   ║  5   ║  8  ║
+║ app.example.org      ║ failed   ║  3m 01s  ║  –   ║  –   ║  –  ║
+╚══════════════════════╩══════════╩══════════╩══════╩══════╩═════╝
+```
+
+Failed targets are retried up to twice with a 60-second delay before being marked failed. The process exits with code 1 if any target failed.
+
+### Log to file (background-friendly)
+
+```bash
+bugbounty scan --config config/targets.yaml \
+    --log-file /var/log/bugbounty-agent/scan.log
+```
+
+The file handler always writes at `INFO` level with full timestamps (`YYYY-MM-DD HH:MM:SS`), regardless of `--verbose`. The console handler is unaffected. The directory is created automatically if it does not exist.
+
+### Graceful shutdown (SIGTERM)
+
+The agent respects `SIGTERM` and `SIGINT` (Ctrl-C). On receipt, it sets a shutdown flag and exits cleanly **after the current target finishes** — no mid-scan corruption, no partial reports. Useful when running as a systemd `oneshot` service.
+
+```bash
+kill -TERM <pid>      # finishes current target, then exits
+kill -INT  <pid>      # same — Ctrl-C in a terminal session
+```
+
+---
+
+## Autonomous Background Operation (systemd)
+
+Drop the agent on an EC2 instance, start it once, and come back to findings in Slack.
+
+### 1. Install the agent
+
+```bash
+# Create a dedicated user (no login shell)
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin bugbounty
+
+# Install to /opt
+sudo mkdir -p /opt/bugbounty-agent
+sudo git clone <repo-url> /opt/bugbounty-agent
+sudo chown -R bugbounty:bugbounty /opt/bugbounty-agent
+
+# Create virtualenv and install dependencies
+sudo -u bugbounty python3 -m venv /opt/bugbounty-agent/venv
+sudo -u bugbounty /opt/bugbounty-agent/venv/bin/pip install -e /opt/bugbounty-agent
+
+# Create log directory
+sudo mkdir -p /var/log/bugbounty-agent
+sudo chown bugbounty:bugbounty /var/log/bugbounty-agent
+```
+
+### 2. Configure targets and credentials
+
+```bash
+# Copy example config and edit
+sudo cp /opt/bugbounty-agent/config/targets-example.yaml \
+        /opt/bugbounty-agent/config/targets.yaml
+sudo nano /opt/bugbounty-agent/config/targets.yaml
+
+# Create .env with secrets (never put API keys in the YAML)
+sudo tee /opt/bugbounty-agent/.env > /dev/null <<EOF
+ANTHROPIC_API_KEY=sk-ant-...
+DATABASE_URL=postgresql://bugbounty:password@localhost:5432/bugbounty
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../...
+SMTP_PASSWORD=your-smtp-password
+EOF
+sudo chmod 600 /opt/bugbounty-agent/.env
+sudo chown bugbounty:bugbounty /opt/bugbounty-agent/.env
+```
+
+### 3. Install the systemd service
+
+```bash
+# Copy unit files
+sudo cp /opt/bugbounty-agent/systemd/bugbounty-agent.service /etc/systemd/system/
+sudo cp /opt/bugbounty-agent/systemd/bugbounty-agent.timer   /etc/systemd/system/
+
+# Reload and enable
+sudo systemctl daemon-reload
+sudo systemctl enable bugbounty-agent.timer   # auto-start on boot
+```
+
+### 4. Run it
+
+**One-shot (run now, exit when done):**
+```bash
+sudo systemctl start bugbounty-agent.service
+```
+
+**Scheduled (daily, every day):**
+```bash
+sudo systemctl start bugbounty-agent.timer
+sudo systemctl status bugbounty-agent.timer
+```
+
+**Watch live output:**
+```bash
+# Journal (real-time)
+journalctl -u bugbounty-agent -f
+
+# Log file (same content, persisted)
+tail -f /var/log/bugbounty-agent/scan.log
+```
+
+**Check last run status:**
+```bash
+systemctl status bugbounty-agent.service
+journalctl -u bugbounty-agent --since "1 hour ago"
+```
+
+### 5. Customise the schedule
+
+Edit `/etc/systemd/system/bugbounty-agent.timer`:
+
+```ini
+[Timer]
+OnCalendar=daily          # every day at midnight
+# OnCalendar=Mon *-*-* 02:00:00   # every Monday at 02:00
+# OnCalendar=*-*-* 02:00:00       # every day at 02:00 (same as daily)
+Persistent=true           # catch up on missed runs after downtime
+```
+
+After editing:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart bugbounty-agent.timer
+```
+
+### 6. Stop and disable
+
+```bash
+# Stop a running scan (graceful — finishes current target first)
+sudo systemctl stop bugbounty-agent.service
+
+# Disable the timer (no more scheduled runs)
+sudo systemctl disable bugbounty-agent.timer
+sudo systemctl stop bugbounty-agent.timer
+```
+
+### Systemd unit summary
+
+| File | Purpose |
+|---|---|
+| `systemd/bugbounty-agent.service` | `Type=oneshot` service — runs the scan to completion and exits |
+| `systemd/bugbounty-agent.timer` | Triggers the service on a schedule (`OnCalendar=daily`) |
+
+The service reads credentials from `/opt/bugbounty-agent/.env` via `EnvironmentFile=`. Logs go to both the systemd journal and `/var/log/bugbounty-agent/scan.log`. `Restart=on-failure` with a 5-minute back-off guards against transient errors.
+
 ---
 
 ## False Positive Minimisation
@@ -1126,11 +1377,17 @@ results/
 bugbounty-agent/
 │
 ├── config/
-│   └── config.yaml              # example configuration
+│   ├── config.yaml              # single-target example configuration
+│   └── targets-example.yaml     # multi-target + notifications example
+│
+├── systemd/
+│   ├── bugbounty-agent.service  # systemd oneshot service unit
+│   └── bugbounty-agent.timer    # systemd daily timer unit
 │
 ├── bugbounty/
 │   ├── core/
 │   │   ├── config.py            # Pydantic config models + YAML loader
+│   │   ├── notifier.py          # Notifier: Slack / Discord / webhook / SMTP delivery
 │   │   ├── scope.py             # ScopeValidator (wildcard + CIDR)
 │   │   ├── rate_limiter.py      # Semaphore + token-bucket rate limiting
 │   │   ├── llm.py               # LLM provider abstraction (Claude + OpenAI)
@@ -1180,7 +1437,8 @@ bugbounty-agent/
 ├── results/                     # Scan output (gitignored)
 ├── pyproject.toml
 ├── requirements.txt
-└── .env.example                 # ANTHROPIC_API_KEY, OPENAI_API_KEY, DATABASE_URL
+└── .env.example                 # ANTHROPIC_API_KEY, OPENAI_API_KEY, DATABASE_URL,
+                                 # SLACK_WEBHOOK_URL, DISCORD_WEBHOOK_URL, SMTP_PASSWORD
 ```
 
 ---

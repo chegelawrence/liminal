@@ -1,0 +1,10 @@
+[Unit]
+Description=BugBounty Agent - Scheduled Scan Timer
+Requires=bugbounty-agent.service
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
