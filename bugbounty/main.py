@@ -575,7 +575,11 @@ def check_tools() -> None:
     key_table = Table(title="API Keys", show_header=True, header_style="bold dim")
     key_table.add_column("Provider")
     key_table.add_column("Status")
-    for env_var, label in [("ANTHROPIC_API_KEY", "Claude (Anthropic)"), ("OPENAI_API_KEY", "OpenAI")]:
+    for env_var, label in [
+        ("ANTHROPIC_API_KEY", "Claude (Anthropic)"),
+        ("OPENAI_API_KEY", "OpenAI"),
+        ("GROQ_API_KEY", "Groq (free)"),
+    ]:
         val = os.environ.get(env_var, "")
         if val:
             key_table.add_row(label, Text("Configured", style="bold green"))
