@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
@@ -288,7 +289,7 @@ class DataStore:
                 host.subdomain,
                 host.status_code,
                 host.title,
-                host.technologies,
+                json.dumps(host.technologies),
                 host.content_length,
                 host.server,
                 host.probed_at,
@@ -421,16 +422,16 @@ class DataStore:
                 finding.host,
                 finding.matched_at,
                 finding.description,
-                finding.tags,
+                json.dumps(finding.tags),
                 finding.cvss_score,
                 finding.cve_id,
-                finding.raw_output,
+                json.dumps(finding.raw_output),
                 finding.is_false_positive,
                 finding.ai_analysis,
                 finding.poc_steps,
                 finding.impact_statement,
                 finding.remediation,
-                finding.references,
+                json.dumps(finding.references),
                 finding.report_title,
                 finding.formatted_description,
                 finding.discovered_at,
@@ -475,16 +476,16 @@ class DataStore:
                 finding.host,
                 finding.matched_at,
                 finding.description,
-                finding.tags,
+                json.dumps(finding.tags),
                 finding.cvss_score,
                 finding.cve_id,
-                finding.raw_output,
+                json.dumps(finding.raw_output),
                 finding.is_false_positive,
                 finding.ai_analysis,
                 finding.poc_steps,
                 finding.impact_statement,
                 finding.remediation,
-                finding.references,
+                json.dumps(finding.references),
                 finding.report_title,
                 finding.formatted_description,
                 finding.id,
