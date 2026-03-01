@@ -113,7 +113,7 @@ _SCHEMA_STATEMENTS = [
         poc_steps TEXT,
         impact_statement TEXT,
         remediation TEXT,
-        references JSONB NOT NULL DEFAULT '[]',
+        "references" JSONB NOT NULL DEFAULT '[]',
         report_title TEXT,
         formatted_description TEXT,
         discovered_at TIMESTAMPTZ NOT NULL,
@@ -404,7 +404,7 @@ class DataStore:
                     (id, scan_run_id, template_id, name, severity, host,
                      matched_at, description, tags, cvss_score, cve_id,
                      raw_output, is_false_positive, ai_analysis, poc_steps,
-                     impact_statement, remediation, references,
+                     impact_statement, remediation, "references",
                      report_title, formatted_description, discovered_at)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
                         $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
@@ -461,7 +461,7 @@ class DataStore:
                        poc_steps            = $13,
                        impact_statement     = $14,
                        remediation          = $15,
-                       references           = $16,
+                       "references"         = $16,
                        report_title         = $17,
                        formatted_description = $18
                  WHERE id = $19
