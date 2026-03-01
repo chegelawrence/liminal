@@ -100,8 +100,9 @@ class Orchestrator:
             name=config.ai.provider,
             anthropic_api_key=config.anthropic_api_key,
             openai_api_key=config.openai_api_key,
+            groq_api_key=config.groq_api_key,
             claude_model=config.ai.claude_model,
-            openai_model=config.ai.openai_model,
+            openai_model=config.ai.model,
             max_tokens=config.ai.max_tokens,
             temperature=config.ai.temperature,
         )

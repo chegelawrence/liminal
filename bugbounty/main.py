@@ -140,12 +140,26 @@ def scan(
         console.print(f"[red]Configuration error:[/red] {exc}")
         sys.exit(1)
 
-    if not app_config.anthropic_api_key:
+    _provider = app_config.ai.provider
+    if _provider == "claude" and not app_config.anthropic_api_key:
         console.print(
             "[red]Error:[/red] ANTHROPIC_API_KEY is not set. "
             "Set it in your environment or .env file."
         )
         sys.exit(1)
+    elif _provider == "openai" and not app_config.openai_api_key:
+        console.print(
+            "[red]Error:[/red] OPENAI_API_KEY is not set. "
+            "Set it in your environment or .env file."
+        )
+        sys.exit(1)
+    elif _provider == "groq" and not app_config.groq_api_key:
+        console.print(
+            "[red]Error:[/red] GROQ_API_KEY is not set. "
+            "Get a free key at https://console.groq.com"
+        )
+        sys.exit(1)
+    # "ollama" requires no API key
 
     if not app_config.db_dsn:
         console.print(

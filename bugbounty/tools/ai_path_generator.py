@@ -90,11 +90,13 @@ class AIPathGenerator:
         ai_config: AIConfig,
         anthropic_api_key: str = "",
         openai_api_key: str = "",
+        groq_api_key: str = "",
     ) -> None:
         self.ai_config = ai_config
         self._provider: Optional[LLMProvider] = None
         self._anthropic_api_key = anthropic_api_key
         self._openai_api_key = openai_api_key
+        self._groq_api_key = groq_api_key
 
     def _get_provider(self) -> LLMProvider:
         if self._provider is None:
@@ -102,8 +104,9 @@ class AIPathGenerator:
                 name=self.ai_config.provider,
                 anthropic_api_key=self._anthropic_api_key,
                 openai_api_key=self._openai_api_key,
+                groq_api_key=self._groq_api_key,
                 claude_model=self.ai_config.claude_model,
-                openai_model=self.ai_config.openai_model,
+                openai_model=self.ai_config.model,
                 # Path lists are short; cap tokens for cost efficiency
                 max_tokens=2048,
                 temperature=0,

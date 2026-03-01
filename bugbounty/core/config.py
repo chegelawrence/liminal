@@ -308,12 +308,14 @@ class VulnToolsConfig(BaseModel):
 
 
 class AIConfig(BaseModel):
-    # Provider selection: "claude" or "openai"
+    # Provider selection: "claude", "openai", "groq", or "ollama"
     provider: str = "claude"
     # Claude settings
     claude_model: str = "claude-opus-4-6"
     # OpenAI settings
     openai_model: str = "gpt-4o"
+    # Groq / Ollama settings (both use the OpenAI-compatible API)
+    groq_model: str = "llama-3.3-70b-versatile"
     # Shared settings
     max_tokens: int = 8192
     temperature: float = 0
@@ -323,6 +325,8 @@ class AIConfig(BaseModel):
         """Convenience: return the active model name."""
         if self.provider == "openai":
             return self.openai_model
+        if self.provider in ("groq", "ollama"):
+            return self.groq_model
         return self.claude_model
 
 
@@ -348,6 +352,7 @@ class AppConfig(BaseModel):
     # Injected from environment – not from YAML
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    groq_api_key: str = ""
     db_dsn: str = ""
 
     @model_validator(mode="after")
@@ -356,6 +361,8 @@ class AppConfig(BaseModel):
             self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not self.openai_api_key:
             self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not self.groq_api_key:
+            self.groq_api_key = os.environ.get("GROQ_API_KEY", "")
         if not self.db_dsn:
             self.db_dsn = os.environ.get("DATABASE_URL", "")
         # Inject notification credentials from environment if not set in YAML

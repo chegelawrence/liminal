@@ -275,6 +275,7 @@ class ScanPipeline:
                 ai_config=config.ai,
                 anthropic_api_key=config.anthropic_api_key,
                 openai_api_key=config.openai_api_key,
+                groq_api_key=config.groq_api_key,
             )
             if _AI_PATH_GEN_AVAILABLE and exposure_cfg.ai_path_generation
             else None

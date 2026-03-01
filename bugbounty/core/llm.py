@@ -1,4 +1,4 @@
-"""Unified LLM provider abstraction supporting Claude (Anthropic) and OpenAI."""
+"""Unified LLM provider abstraction supporting Claude, OpenAI, Groq, and Ollama."""
 
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ class ClaudeProvider(LLMProvider):
 
 
 class OpenAIProvider(LLMProvider):
-    """OpenAI provider using the async client."""
+    """OpenAI-compatible provider (OpenAI, Groq, Ollama, OpenRouter, …)."""
 
     def __init__(
         self,
@@ -160,10 +160,11 @@ class OpenAIProvider(LLMProvider):
         model: str = "gpt-4o",
         max_tokens: int = 8192,
         temperature: float = 0,
+        base_url: Optional[str] = None,
     ) -> None:
         super().__init__(api_key, model, max_tokens, temperature)
         from openai import AsyncOpenAI  # local import
-        self.client = AsyncOpenAI(api_key=api_key)
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     async def create_message(
         self,
@@ -261,6 +262,7 @@ def create_provider(
     name: str,
     anthropic_api_key: str = "",
     openai_api_key: str = "",
+    groq_api_key: str = "",
     claude_model: str = "claude-opus-4-6",
     openai_model: str = "gpt-4o",
     max_tokens: int = 8192,
@@ -269,11 +271,12 @@ def create_provider(
     """Factory to instantiate the correct LLM provider.
 
     Args:
-        name:              "claude" or "openai"
+        name:              "claude", "openai", "groq", or "ollama"
         anthropic_api_key: Required when name=="claude"
         openai_api_key:    Required when name=="openai"
+        groq_api_key:      Required when name=="groq" (free at console.groq.com)
         claude_model:      Claude model ID override
-        openai_model:      OpenAI model ID override
+        openai_model:      Model ID for OpenAI / Groq / Ollama
         max_tokens:        Max completion tokens
         temperature:       Sampling temperature
 
@@ -308,7 +311,29 @@ def create_provider(
             max_tokens=max_tokens,
             temperature=temperature,
         )
+    elif name == "groq":
+        if not groq_api_key:
+            raise ValueError(
+                "GROQ_API_KEY is required for the Groq provider. "
+                "Get a free key at https://console.groq.com"
+            )
+        return OpenAIProvider(
+            api_key=groq_api_key,
+            model=openai_model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            base_url="https://api.groq.com/openai/v1",
+        )
+    elif name == "ollama":
+        return OpenAIProvider(
+            api_key="ollama",
+            model=openai_model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            base_url="http://localhost:11434/v1",
+        )
     else:
         raise ValueError(
-            f"Unknown LLM provider: '{name}'. Valid options are 'claude' or 'openai'."
+            f"Unknown LLM provider: '{name}'. "
+            f"Valid options are 'claude', 'openai', 'groq', 'ollama'."
         )

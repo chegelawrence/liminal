@@ -2,7 +2,7 @@
 
 > AI-powered vulnerability hunting framework for unauthenticated bug bounty targets.
 
-Automates the full pipeline from subdomain discovery to confirmed vulnerability reporting, using Claude or OpenAI as the reasoning engine. Purpose-built scanners cover ten hardcoded vulnerability classes; an adaptive anomaly-detection layer finds novel vulnerabilities outside that set and learns confirmed patterns across scans.
+Automates the full pipeline from subdomain discovery to confirmed vulnerability reporting, using Claude, OpenAI, Groq (free), or Ollama (local) as the reasoning engine. Purpose-built scanners cover ten hardcoded vulnerability classes; an adaptive anomaly-detection layer finds novel vulnerabilities outside that set and learns confirmed patterns across scans.
 
 ---
 
@@ -184,7 +184,7 @@ flowchart TD
         AN["15 · anomaly detection (novel vulns + pattern replay)"]
     end
 
-    subgraph AI["AI Layer (Claude or OpenAI)"]
+    subgraph AI["AI Layer (Claude · OpenAI · Groq · Ollama)"]
         direction TB
         PLAN["Planner → ReconPlan"]
         PATH["Path Generator → custom paths"]
@@ -902,8 +902,11 @@ pip install -e .
 
 # Set API keys and database
 cp .env.example .env
-# Edit .env:
-#   ANTHROPIC_API_KEY=sk-ant-...
+# Edit .env — only the key for your chosen provider is needed:
+#   ANTHROPIC_API_KEY=sk-ant-...   (provider: "claude")
+#   OPENAI_API_KEY=sk-...          (provider: "openai")
+#   GROQ_API_KEY=gsk_...           (provider: "groq"  — free)
+#   No key needed                  (provider: "ollama" — local)
 #   DATABASE_URL=postgresql://liminal:password@localhost:5432/liminal
 
 # Verify tools
@@ -952,32 +955,79 @@ cp config/config.yaml my-target.yaml
 
 ### AI Provider
 
-Switch between Claude and OpenAI with a single line:
+Four providers are supported. Only the key for the chosen provider is required.
+
+| Provider | `ai.provider` | Cost | Notes |
+|---|---|---|---|
+| Anthropic Claude | `claude` | Paid | Default; highest quality |
+| OpenAI | `openai` | Paid | GPT-4o |
+| **Groq** | `groq` | **Free tier** | Llama 3.3 70B, OpenAI-compatible API |
+| **Ollama** | `ollama` | **Free (local)** | Any model you pull; no data leaves the machine |
+
+**Claude (default):**
 
 ```yaml
 ai:
-  provider: "claude"          # Use Anthropic Claude
-  claude_model: "claude-opus-4-6"
-
-  # --- OR ---
-
-  provider: "openai"          # Use OpenAI
-  openai_model: "gpt-4o"
-
-  max_tokens: 8192
-  temperature: 0
+  provider: "claude"
+  claude_model: "claude-opus-4-6"   # or claude-sonnet-4-6 for lower cost
 ```
 
-Set the corresponding key in `.env`:
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+**OpenAI:**
+
+```yaml
+ai:
+  provider: "openai"
+  openai_model: "gpt-4o"
+```
 
 ```bash
-# For Claude
-ANTHROPIC_API_KEY=sk-ant-...
-
-# For OpenAI
 OPENAI_API_KEY=sk-...
+```
 
-# PostgreSQL
+**Groq (free tier — recommended for cost reduction):**
+
+```yaml
+ai:
+  provider: "groq"
+  groq_model: "llama-3.3-70b-versatile"   # or mixtral-8x7b-32768
+```
+
+```bash
+# Free key at https://console.groq.com
+GROQ_API_KEY=gsk_...
+```
+
+**Ollama (fully local, zero API cost):**
+
+```yaml
+ai:
+  provider: "ollama"
+  groq_model: "llama3.3"   # any model you have pulled locally
+```
+
+```bash
+# No key required — just have ollama running:
+#   ollama pull llama3.3
+#   ollama serve
+```
+
+> Groq and Ollama both use the OpenAI-compatible API under the hood — no extra dependencies required beyond the existing `openai` package.
+
+**Shared settings** (all providers):
+
+```yaml
+ai:
+  max_tokens: 8192   # max completion tokens per LLM call
+  temperature: 0     # 0 = deterministic (recommended for tool use)
+```
+
+Set the database URL regardless of provider:
+
+```bash
 DATABASE_URL=postgresql://liminal:password@localhost:5432/liminal
 ```
 
@@ -1368,8 +1418,14 @@ sudo cp /opt/liminal/config/targets-example.yaml \
 sudo nano /opt/liminal/config/targets.yaml
 
 # Create .env with secrets (never put API keys in the YAML)
+# Only the key for your chosen ai.provider is required.
 sudo tee /opt/liminal/.env > /dev/null <<EOF
-ANTHROPIC_API_KEY=sk-ant-...
+# Pick one:
+ANTHROPIC_API_KEY=sk-ant-...   # provider: "claude"
+# OPENAI_API_KEY=sk-...        # provider: "openai"
+# GROQ_API_KEY=gsk_...         # provider: "groq"  (free)
+# Ollama needs no key          # provider: "ollama" (local)
+
 DATABASE_URL=postgresql://liminal:password@localhost:5432/liminal
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../...
 SMTP_PASSWORD=your-smtp-password
@@ -1571,7 +1627,7 @@ liminal/
 │   │   ├── notifier.py          # Notifier: Slack / Discord / webhook / SMTP delivery
 │   │   ├── scope.py             # ScopeValidator (wildcard + CIDR)
 │   │   ├── rate_limiter.py      # Semaphore + token-bucket rate limiting
-│   │   ├── llm.py               # LLM provider abstraction (Claude + OpenAI)
+│   │   ├── llm.py               # LLM provider abstraction (Claude, OpenAI, Groq, Ollama)
 │   │   └── interactsh.py        # OOB callback client for SSRF confirmation
 │   │
 │   ├── tools/
@@ -1620,8 +1676,9 @@ liminal/
 ├── results/                     # Scan output (gitignored)
 ├── pyproject.toml
 ├── requirements.txt
-└── .env.example                 # ANTHROPIC_API_KEY, OPENAI_API_KEY, DATABASE_URL,
-                                 # SLACK_WEBHOOK_URL, DISCORD_WEBHOOK_URL, SMTP_PASSWORD
+└── .env.example                 # ANTHROPIC_API_KEY, OPENAI_API_KEY, GROQ_API_KEY,
+                                 # DATABASE_URL, SLACK_WEBHOOK_URL, DISCORD_WEBHOOK_URL,
+                                 # SMTP_PASSWORD (Ollama needs no key)
 ```
 
 ---
