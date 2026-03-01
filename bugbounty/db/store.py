@@ -74,9 +74,12 @@ _SCHEMA_STATEMENTS = [
         url TEXT NOT NULL,
         source TEXT NOT NULL,
         status_code INTEGER,
-        discovered_at TIMESTAMPTZ NOT NULL,
-        UNIQUE(scan_run_id, url)
+        discovered_at TIMESTAMPTZ NOT NULL
     )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS discovered_urls_scan_run_id_url_key
+        ON discovered_urls (scan_run_id, md5(url))
     """,
     """
     CREATE TABLE IF NOT EXISTS anomaly_patterns (
