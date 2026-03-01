@@ -25,10 +25,11 @@ from bugbounty.pipeline.orchestrator import Orchestrator
 console = Console()
 
 _BANNER = r"""[bold cyan]
- _     ___  __  __ ___ _  _    _   _
-| |   |_ _||  \/  |_ _| \| |  /_\ | |
-| |_   | | | |\/| | | | .` | / _ \| |_
-|___| |___|_|  |_|___|_|\_|/_/ \_\|___|
+  _     _           _           _
+ | |   (_)_ __ ___ (_)_ __   __| |
+ | |   | | '_ ` _ \| | '_ \ / _` |
+ | |___| | | | | | | | | | | (_| |
+ |_____|_|_| |_| |_|_|_| |_|\__,_|
 [/bold cyan][dim]  AI-Powered Security Reconnaissance Framework v0.1.0[/dim]
 """
 
