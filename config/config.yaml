@@ -1,15 +1,14 @@
 target:
-  domain: "example.com"
-  program_name: "Example Bug Bounty"
-  platform: "HackerOne"   # HackerOne, Bugcrowd, Intigriti, etc.
+  domain: "make.com"
+  program_name: "Make.Com"
+  platform: "Self"   # HackerOne, Bugcrowd, Intigriti, etc.
 
 scope:
   in_scope:
-    - "*.example.com"
-    - "example.com"
-  out_of_scope:
-    - "blog.example.com"
-    - "status.example.com"
+    - "*.make.com"
+  # out_of_scope:
+  #   - "blog.example.com"
+  #   - "status.example.com"
   ip_ranges: []
 
 rate_limits:
@@ -89,14 +88,16 @@ vuln:
     timeout: 30
 
 ai:
-  # Provider: "claude" or "openai"
-  provider: "claude"
+  # # Provider: "claude" or "openai"
+  # provider: "claude"
 
-  # Claude settings (active when provider = "claude")
-  claude_model: "claude-opus-4-6"
+  # # Claude settings (active when provider = "claude")
+  # claude_model: "claude-opus-4-6"
 
-  # OpenAI settings (active when provider = "openai")
-  openai_model: "gpt-4o"
+  # # OpenAI settings (active when provider = "openai")
+  # openai_model: "gpt-4o"
+  provider: "ollama"
+  groq_model: "llama3.2"
 
   # Shared settings
   max_tokens: 8192
