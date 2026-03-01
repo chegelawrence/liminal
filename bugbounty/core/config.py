@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -389,6 +390,10 @@ def load_config(path: str, domain_override: Optional[str] = None) -> AppConfig:
         FileNotFoundError: If the config file does not exist.
         ValueError: If the YAML is malformed or required fields are missing.
     """
+    # Load .env file from the project root (next to the config file or cwd)
+    load_dotenv(dotenv_path=Path(path).parent.parent / ".env", override=False)
+    load_dotenv(override=False)  # fallback: .env in cwd
+
     config_path = Path(path)
     if not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {path}")
