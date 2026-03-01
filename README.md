@@ -897,7 +897,9 @@ cd liminal
 # Check what is/isn't installed without making changes
 ./install-tools.sh --check
 
-# Install Python dependencies for the framework itself
+# Install Python dependencies (use a virtualenv — required on modern Debian/Ubuntu)
+python3 -m venv venv
+source venv/bin/activate
 pip install -e .
 
 # Set API keys and database
