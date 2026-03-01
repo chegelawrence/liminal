@@ -33,7 +33,7 @@ class Notifier:
         if not self.cfg.notify_on_start:
             return
         msg = f"*Scan started* — `{domain}`\nRun ID: `{run_id}`"
-        await self._deliver(subject=f"[BugBounty] Scan started: {domain}", body=msg)
+        await self._deliver(subject=f"[Liminal] Scan started: {domain}", body=msg)
 
     async def scan_complete(
         self,
@@ -58,11 +58,11 @@ class Notifier:
             f"Findings: Critical={crit}  High={high}  Medium={med}  Low={low}\n"
             f"Report: `{report_path}`"
         )
-        await self._deliver(subject=f"[BugBounty] Scan complete: {domain}", body=msg)
+        await self._deliver(subject=f"[Liminal] Scan complete: {domain}", body=msg)
 
     async def scan_failed(self, domain: str, error: str) -> None:
         msg = f"*Scan FAILED* — `{domain}`\nError: {error}"
-        await self._deliver(subject=f"[BugBounty] Scan failed: {domain}", body=msg)
+        await self._deliver(subject=f"[Liminal] Scan failed: {domain}", body=msg)
 
     async def critical_finding(
         self,
@@ -80,7 +80,7 @@ class Notifier:
             f"Host: `{host}`{cvss_str}"
         )
         await self._deliver(
-            subject=f"[BugBounty] Critical finding on {domain}: {name}", body=msg
+            subject=f"[Liminal] Critical finding on {domain}: {name}", body=msg
         )
 
     async def batch_complete(
@@ -95,7 +95,7 @@ class Notifier:
             f"Targets: {total}  Succeeded: {succeeded}  Failed: {failed}\n"
             f"Total findings: {total_findings}"
         )
-        await self._deliver(subject="[BugBounty] Batch scan complete", body=msg)
+        await self._deliver(subject="[Liminal] Batch scan complete", body=msg)
 
     # ------------------------------------------------------------------
     # Internal delivery
@@ -142,7 +142,7 @@ class Notifier:
                     logger.warning("Discord webhook returned %s: %s", resp.status, body)
 
     async def _send_generic_webhook(self, text: str) -> None:
-        payload = {"message": text, "source": "bugbounty-agent"}
+        payload = {"message": text, "source": "liminal"}
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 self.cfg.webhook_url, json=payload, timeout=aiohttp.ClientTimeout(total=10)

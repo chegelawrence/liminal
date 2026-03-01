@@ -1,4 +1,4 @@
-"""CLI entry point for the Bug Bounty AI Agent Framework."""
+"""CLI entry point for the Liminal Framework."""
 
 from __future__ import annotations
 
@@ -25,13 +25,11 @@ from bugbounty.pipeline.orchestrator import Orchestrator
 console = Console()
 
 _BANNER = r"""[bold cyan]
-  ____              ____                  _         _    ___
- | __ ) _   _  __ | __ )  ___  _   _ _ __ | |_ _   _| |  / _ \
- |  _ \| | | |/ _` |  _ \ / _ \| | | | '_ \| __| | | | | | | |
- | |_) | |_| | (_| | |_) | (_) | |_| | | | | |_| |_| | | |_| |
- |____/ \__,_|\__, |____/ \___/ \__,_|_| |_|\__|\__, |_|\___/
-              |___/                              |___/
-[/bold cyan][dim]  AI-Powered Bug Bounty Automation Framework v0.1.0[/dim]
+ _     ___  __  __ ___ _  _    _   _
+| |   |_ _||  \/  |_ _| \| |  /_\ | |
+| |_   | | | |\/| | | | .` | / _ \| |_
+|___| |___|_|  |_|___|_|\_|/_/ \_\|___|
+[/bold cyan][dim]  AI-Powered Security Reconnaissance Framework v0.1.0[/dim]
 """
 
 
@@ -66,9 +64,9 @@ def _configure_logging(verbose: bool, log_file: Optional[str] = None) -> None:
 
 
 @click.group()
-@click.version_option("0.1.0", prog_name="bugbounty")
+@click.version_option("0.1.0", prog_name="liminal")
 def cli() -> None:
-    """Bug Bounty AI Agent Framework.
+    """Liminal — AI-Powered Security Reconnaissance Framework.
 
     An AI-powered automation framework for bug bounty reconnaissance,
     vulnerability scanning, and professional report generation.
@@ -105,7 +103,7 @@ def cli() -> None:
 @click.option(
     "--log-file",
     default=None,
-    help="Path to write log output (e.g. /var/log/bugbounty/scan.log)",
+    help="Path to write log output (e.g. /var/log/liminal/scan.log)",
 )
 def scan(
     config: str,
@@ -366,7 +364,7 @@ def report(scan_run_id: str, fmt: str, config: str) -> None:
     """Generate or re-generate a report for a previous scan run.
 
     SCAN_RUN_ID is the UUID of a previously completed scan run.
-    Use `bugbounty list-scans` to find available scan run IDs.
+    Use `liminal list-scans` to find available scan run IDs.
     """
     _configure_logging(verbose=False)
 
@@ -489,7 +487,7 @@ def list_scans(config: str) -> None:
 
         console.print(table)
         console.print(
-            f"\n[dim]Use `bugbounty report <FULL_SCAN_ID> --config <config>` "
+            f"\n[dim]Use `liminal report <FULL_SCAN_ID> --config <config>` "
             f"to regenerate a report.[/dim]"
         )
 

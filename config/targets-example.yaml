@@ -1,10 +1,10 @@
-# BugBounty Agent - Multi-Target Configuration Example
+# Liminal - Multi-Target Configuration Example
 #
 # Drop this on your EC2 instance, fill in the API keys via environment
 # variables or the .env file, then start the service:
 #
-#   systemctl start bugbounty-agent
-#   journalctl -u bugbounty-agent -f
+#   systemctl start liminal
+#   journalctl -u liminal -f
 
 # ── Multiple targets (scanned sequentially) ─────────────────────────────────
 targets:
@@ -53,7 +53,7 @@ ai:
 
 # ── Output ───────────────────────────────────────────────────────────────────
 output:
-  results_dir: "/opt/bugbounty-agent/results"
+  results_dir: "/opt/liminal/results"
   formats:
     - html
     - markdown

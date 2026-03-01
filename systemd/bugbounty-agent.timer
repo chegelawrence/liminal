@@ -1,6 +1,6 @@
 [Unit]
-Description=BugBounty Agent - Scheduled Scan Timer
-Requires=bugbounty-agent.service
+Description=Liminal - Scheduled Scan Timer
+Requires=liminal.service
 
 [Timer]
 OnCalendar=daily

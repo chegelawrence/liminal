@@ -1,19 +1,19 @@
 [Unit]
-Description=BugBounty Agent - Autonomous Security Scanner
+Description=Liminal - Autonomous Security Scanner
 After=network-online.target postgresql.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=bugbounty
-WorkingDirectory=/opt/bugbounty-agent
-EnvironmentFile=/opt/bugbounty-agent/.env
-ExecStart=/opt/bugbounty-agent/venv/bin/bugbounty scan \
-    --config /opt/bugbounty-agent/config/targets.yaml \
-    --log-file /var/log/bugbounty-agent/scan.log
+User=liminal
+WorkingDirectory=/opt/liminal
+EnvironmentFile=/opt/liminal/.env
+ExecStart=/opt/liminal/venv/bin/liminal scan \
+    --config /opt/liminal/config/targets.yaml \
+    --log-file /var/log/liminal/scan.log
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=bugbounty-agent
+SyslogIdentifier=liminal
 Restart=on-failure
 RestartSec=300
 

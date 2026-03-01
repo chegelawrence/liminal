@@ -1,4 +1,4 @@
-# BugBounty Agent
+# Liminal
 
 > AI-powered vulnerability hunting framework for unauthenticated bug bounty targets.
 
@@ -55,7 +55,7 @@ Automates the full pipeline from subdomain discovery to confirmed vulnerability 
 ## Overview
 
 ```
-bugbounty scan --config my-target.yaml
+liminal scan --config my-target.yaml
 ```
 
 ```
@@ -66,7 +66,7 @@ bugbounty scan --config my-target.yaml
  |____/ \__,_|\__, |____/ \___/ \__,_|_| |_|\__|\__, |_|\___/
               |___/                              |___/
 
-  AI-Powered Bug Bounty Automation Framework v0.1.0
+  AI-Powered Security Reconnaissance Framework v0.1.0
 
 ┌─ Scan Configuration ──────────────────────────────────┐
 │ Target:     api.example.com                            │
@@ -143,7 +143,7 @@ bugbounty scan --config my-target.yaml
 
 ```mermaid
 flowchart TD
-    CLI["CLI bugbounty scan"] --> ORCH
+    CLI["CLI liminal scan"] --> ORCH
 
     subgraph ORCH["Orchestrator"]
         direction TB
@@ -889,7 +889,7 @@ nuclei -update-templates
 
 ```bash
 # Clone or download
-cd bugbounty-agent
+cd liminal
 
 # Install all external tools (Go + Python)
 ./install-tools.sh
@@ -904,10 +904,10 @@ pip install -e .
 cp .env.example .env
 # Edit .env:
 #   ANTHROPIC_API_KEY=sk-ant-...
-#   DATABASE_URL=postgresql://bugbounty:password@localhost:5432/bugbounty
+#   DATABASE_URL=postgresql://liminal:password@localhost:5432/liminal
 
 # Verify tools
-bugbounty check-tools
+liminal check-tools
 ```
 
 ### PostgreSQL setup
@@ -916,14 +916,14 @@ Create the database before the first scan:
 
 ```bash
 # Local PostgreSQL
-psql -U postgres -c "CREATE USER bugbounty WITH PASSWORD 'password';"
-psql -U postgres -c "CREATE DATABASE bugbounty OWNER bugbounty;"
+psql -U postgres -c "CREATE USER liminal WITH PASSWORD 'password';"
+psql -U postgres -c "CREATE DATABASE liminal OWNER liminal;"
 
 # Docker (quick dev setup)
 docker run -d --name bb-db \
-  -e POSTGRES_USER=bugbounty \
+  -e POSTGRES_USER=liminal \
   -e POSTGRES_PASSWORD=password \
-  -e POSTGRES_DB=bugbounty \
+  -e POSTGRES_DB=liminal \
   -p 5432:5432 postgres:16-alpine
 ```
 
@@ -978,7 +978,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 
 # PostgreSQL
-DATABASE_URL=postgresql://bugbounty:password@localhost:5432/bugbounty
+DATABASE_URL=postgresql://liminal:password@localhost:5432/liminal
 ```
 
 ### Scope
@@ -1047,7 +1047,7 @@ notifications:
   # Discord incoming webhook — set here or via DISCORD_WEBHOOK_URL env var
   discord_webhook: ""
 
-  # Generic HTTP endpoint — receives POST {"message": "...", "source": "bugbounty-agent"}
+  # Generic HTTP endpoint — receives POST {"message": "...", "source": "liminal"}
   webhook_url: ""
 
   # Email via SMTP + STARTTLS
@@ -1240,38 +1240,38 @@ vuln:
 ### Full scan
 
 ```bash
-bugbounty scan --config my-target.yaml
+liminal scan --config my-target.yaml
 ```
 
 ### Override target domain
 
 ```bash
-bugbounty scan --config my-target.yaml --domain api.othertarget.com
+liminal scan --config my-target.yaml --domain api.othertarget.com
 ```
 
 ### Recon only (no vulnerability scanning)
 
 ```bash
-bugbounty scan --config my-target.yaml --only-recon
+liminal scan --config my-target.yaml --only-recon
 ```
 
 ### Scan only (reuse existing recon)
 
 ```bash
 # After a prior scan with --only-recon:
-bugbounty scan --config my-target.yaml --only-scan --resume <SCAN_ID>
+liminal scan --config my-target.yaml --only-scan --resume <SCAN_ID>
 ```
 
 ### Resume an interrupted scan
 
 ```bash
-bugbounty scan --config my-target.yaml --resume 3f2a1b9c-...
+liminal scan --config my-target.yaml --resume 3f2a1b9c-...
 ```
 
 ### List all previous scans
 
 ```bash
-bugbounty list-scans --config my-target.yaml
+liminal list-scans --config my-target.yaml
 ```
 
 ```
@@ -1287,13 +1287,13 @@ Scan Runs
 ### Regenerate a report
 
 ```bash
-bugbounty report 3f2a1b9c-... --config my-target.yaml --format html
+liminal report 3f2a1b9c-... --config my-target.yaml --format html
 ```
 
 ### Verbose mode (show all tool output)
 
 ```bash
-bugbounty scan --config my-target.yaml --verbose
+liminal scan --config my-target.yaml --verbose
 ```
 
 ### Multi-target batch scan
@@ -1301,7 +1301,7 @@ bugbounty scan --config my-target.yaml --verbose
 Add a `targets:` list to your config (see [Multi-Target Batch Scanning](#multi-target-batch-scanning)) then run normally — the agent scans each target in sequence and prints a summary table when all are done:
 
 ```bash
-bugbounty scan --config config/targets.yaml
+liminal scan --config config/targets.yaml
 ```
 
 ```
@@ -1318,8 +1318,8 @@ Failed targets are retried up to twice with a 60-second delay before being marke
 ### Log to file (background-friendly)
 
 ```bash
-bugbounty scan --config config/targets.yaml \
-    --log-file /var/log/bugbounty-agent/scan.log
+liminal scan --config config/targets.yaml \
+    --log-file /var/log/liminal/scan.log
 ```
 
 The file handler always writes at `INFO` level with full timestamps (`YYYY-MM-DD HH:MM:SS`), regardless of `--verbose`. The console handler is unaffected. The directory is created automatically if it does not exist.
@@ -1343,84 +1343,84 @@ Drop the agent on an EC2 instance, start it once, and come back to findings in S
 
 ```bash
 # Create a dedicated user (no login shell)
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin bugbounty
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin liminal
 
 # Install to /opt
-sudo mkdir -p /opt/bugbounty-agent
-sudo git clone <repo-url> /opt/bugbounty-agent
-sudo chown -R bugbounty:bugbounty /opt/bugbounty-agent
+sudo mkdir -p /opt/liminal
+sudo git clone <repo-url> /opt/liminal
+sudo chown -R liminal:liminal /opt/liminal
 
 # Create virtualenv and install dependencies
-sudo -u bugbounty python3 -m venv /opt/bugbounty-agent/venv
-sudo -u bugbounty /opt/bugbounty-agent/venv/bin/pip install -e /opt/bugbounty-agent
+sudo -u liminal python3 -m venv /opt/liminal/venv
+sudo -u liminal /opt/liminal/venv/bin/pip install -e /opt/liminal
 
 # Create log directory
-sudo mkdir -p /var/log/bugbounty-agent
-sudo chown bugbounty:bugbounty /var/log/bugbounty-agent
+sudo mkdir -p /var/log/liminal
+sudo chown liminal:liminal /var/log/liminal
 ```
 
 ### 2. Configure targets and credentials
 
 ```bash
 # Copy example config and edit
-sudo cp /opt/bugbounty-agent/config/targets-example.yaml \
-        /opt/bugbounty-agent/config/targets.yaml
-sudo nano /opt/bugbounty-agent/config/targets.yaml
+sudo cp /opt/liminal/config/targets-example.yaml \
+        /opt/liminal/config/targets.yaml
+sudo nano /opt/liminal/config/targets.yaml
 
 # Create .env with secrets (never put API keys in the YAML)
-sudo tee /opt/bugbounty-agent/.env > /dev/null <<EOF
+sudo tee /opt/liminal/.env > /dev/null <<EOF
 ANTHROPIC_API_KEY=sk-ant-...
-DATABASE_URL=postgresql://bugbounty:password@localhost:5432/bugbounty
+DATABASE_URL=postgresql://liminal:password@localhost:5432/liminal
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../...
 SMTP_PASSWORD=your-smtp-password
 EOF
-sudo chmod 600 /opt/bugbounty-agent/.env
-sudo chown bugbounty:bugbounty /opt/bugbounty-agent/.env
+sudo chmod 600 /opt/liminal/.env
+sudo chown liminal:liminal /opt/liminal/.env
 ```
 
 ### 3. Install the systemd service
 
 ```bash
 # Copy unit files
-sudo cp /opt/bugbounty-agent/systemd/bugbounty-agent.service /etc/systemd/system/
-sudo cp /opt/bugbounty-agent/systemd/bugbounty-agent.timer   /etc/systemd/system/
+sudo cp /opt/liminal/systemd/liminal.service /etc/systemd/system/
+sudo cp /opt/liminal/systemd/liminal.timer   /etc/systemd/system/
 
 # Reload and enable
 sudo systemctl daemon-reload
-sudo systemctl enable bugbounty-agent.timer   # auto-start on boot
+sudo systemctl enable liminal.timer   # auto-start on boot
 ```
 
 ### 4. Run it
 
 **One-shot (run now, exit when done):**
 ```bash
-sudo systemctl start bugbounty-agent.service
+sudo systemctl start liminal.service
 ```
 
 **Scheduled (daily, every day):**
 ```bash
-sudo systemctl start bugbounty-agent.timer
-sudo systemctl status bugbounty-agent.timer
+sudo systemctl start liminal.timer
+sudo systemctl status liminal.timer
 ```
 
 **Watch live output:**
 ```bash
 # Journal (real-time)
-journalctl -u bugbounty-agent -f
+journalctl -u liminal -f
 
 # Log file (same content, persisted)
-tail -f /var/log/bugbounty-agent/scan.log
+tail -f /var/log/liminal/scan.log
 ```
 
 **Check last run status:**
 ```bash
-systemctl status bugbounty-agent.service
-journalctl -u bugbounty-agent --since "1 hour ago"
+systemctl status liminal.service
+journalctl -u liminal --since "1 hour ago"
 ```
 
 ### 5. Customise the schedule
 
-Edit `/etc/systemd/system/bugbounty-agent.timer`:
+Edit `/etc/systemd/system/liminal.timer`:
 
 ```ini
 [Timer]
@@ -1433,28 +1433,28 @@ Persistent=true           # catch up on missed runs after downtime
 After editing:
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl restart bugbounty-agent.timer
+sudo systemctl restart liminal.timer
 ```
 
 ### 6. Stop and disable
 
 ```bash
 # Stop a running scan (graceful — finishes current target first)
-sudo systemctl stop bugbounty-agent.service
+sudo systemctl stop liminal.service
 
 # Disable the timer (no more scheduled runs)
-sudo systemctl disable bugbounty-agent.timer
-sudo systemctl stop bugbounty-agent.timer
+sudo systemctl disable liminal.timer
+sudo systemctl stop liminal.timer
 ```
 
 ### Systemd unit summary
 
 | File | Purpose |
 |---|---|
-| `systemd/bugbounty-agent.service` | `Type=oneshot` service — runs the scan to completion and exits |
-| `systemd/bugbounty-agent.timer` | Triggers the service on a schedule (`OnCalendar=daily`) |
+| `systemd/liminal.service` | `Type=oneshot` service — runs the scan to completion and exits |
+| `systemd/liminal.timer` | Triggers the service on a schedule (`OnCalendar=daily`) |
 
-The service reads credentials from `/opt/bugbounty-agent/.env` via `EnvironmentFile=`. Logs go to both the systemd journal and `/var/log/bugbounty-agent/scan.log`. `Restart=on-failure` with a 5-minute back-off guards against transient errors.
+The service reads credentials from `/opt/liminal/.env` via `EnvironmentFile=`. Logs go to both the systemd journal and `/var/log/liminal/scan.log`. `Restart=on-failure` with a 5-minute back-off guards against transient errors.
 
 ---
 
@@ -1555,15 +1555,15 @@ results/
 ## Project Structure
 
 ```
-bugbounty-agent/
+liminal/
 │
 ├── config/
 │   ├── config.yaml              # single-target example configuration
 │   └── targets-example.yaml     # multi-target + notifications example
 │
 ├── systemd/
-│   ├── bugbounty-agent.service  # systemd oneshot service unit
-│   └── bugbounty-agent.timer    # systemd daily timer unit
+│   ├── liminal.service  # systemd oneshot service unit
+│   └── liminal.timer    # systemd daily timer unit
 │
 ├── bugbounty/
 │   ├── core/

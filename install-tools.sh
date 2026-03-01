@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install-tools.sh — Install all external tools required by BugBounty Agent
+# install-tools.sh — Install all external tools required by Liminal
 #
 # Usage:
 #   chmod +x install-tools.sh
@@ -212,12 +212,12 @@ install_go_tools() {
     fi
 
     info "Installing $binary  ($desc)..."
-    if go install "$pkg" 2>/tmp/bugbounty_install_err; then
+    if go install "$pkg" 2>/tmp/liminal_install_err; then
       ok "$(printf '%-22s' "$binary")  installed"
       ((installed++)) || true
     else
       err "$(printf '%-22s' "$binary")  FAILED"
-      err "  $(cat /tmp/bugbounty_install_err | tail -3)"
+      err "  $(cat /tmp/liminal_install_err | tail -3)"
       ((failed++)) || true
     fi
   done
@@ -266,12 +266,12 @@ install_python_tools() {
     fi
 
     info "Installing $binary  ($desc)..."
-    if $pip_cmd install --quiet "$pkg" 2>/tmp/bugbounty_install_err; then
+    if $pip_cmd install --quiet "$pkg" 2>/tmp/liminal_install_err; then
       ok "$(printf '%-22s' "$binary")  installed"
       ((installed++)) || true
     else
       err "$(printf '%-22s' "$binary")  FAILED"
-      err "  $(cat /tmp/bugbounty_install_err | tail -3)"
+      err "  $(cat /tmp/liminal_install_err | tail -3)"
       ((failed++)) || true
     fi
   done
@@ -303,7 +303,7 @@ print_summary() {
   if [[ "$all_ok" == true ]]; then
     ok "All tools installed and in PATH. Run your first scan:"
     echo ""
-    echo "    bugbounty scan --config config/config.yaml"
+    echo "    liminal scan --config config/config.yaml"
     echo ""
   else
     warn "${#missing[@]} tool(s) not in PATH: ${missing[*]}"
@@ -319,8 +319,8 @@ print_summary() {
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}BugBounty Agent — Tool Installer${RESET}"
-echo "──────────────────────────────────"
+echo -e "${BOLD}Liminal — Tool Installer${RESET}"
+echo "──────────────────────────"
 
 if [[ "$CHECK_ONLY" == true ]]; then
   check_status
